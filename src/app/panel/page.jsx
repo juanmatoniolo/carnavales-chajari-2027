@@ -9,6 +9,12 @@ import { ref, get, remove } from 'firebase/database';
 import { COMPARSAS, COMPARSA_IDS } from '../../lib/comparsas';
 import { calcEdad, formatYMD, formatEpoch } from '../../lib/dates';
 
+function labelTipo(tipo) {
+    if (tipo === 'passista') return { emoji: '💃', label: 'Passista', color: '#ec4899' };
+    if (tipo === 'ritmista') return { emoji: '🥁', label: 'Ritmista', color: '#f59e0b' };
+    return { emoji: '—', label: 'Sin tipo', color: '#9ca3af' };
+}
+
 export default function PanelRootPage() {
     const [bailarines, setBailarines] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -17,6 +23,7 @@ export default function PanelRootPage() {
     const [fComparsa, setFComparsa] = useState('todas');
     const [fEdadMin, setFEdadMin] = useState('');
     const [fEdadMax, setFEdadMax] = useState('');
+    const [fTipo, setFTipo] = useState('todos'); // 🆕
 
     const load = async () => {
         setLoading(true);
@@ -30,9 +37,17 @@ export default function PanelRootPage() {
                         arr.push({
                             id,
                             comparsa,
+                            apellido: b.apellido || '',
                             nombre: b.nombre || '',
+                            nombreCompleto:
+                                b.nombreCompleto || `${b.apellido || ''} ${b.nombre || ''}`.trim(),
                             dni: b.dni || '',
                             fechaNacimiento: b.fechaNacimiento || '',
+                            tipo: b.tipo || '',
+                            telefono: b.telefono || '',
+                            instagram: b.instagram || '',
+                            esMenor: b.esMenor || false,
+                            tutor: b.tutor || null,
                             edad: calcEdad(b.fechaNacimiento),
                             createdAt: b.createdAt?.epoch || null,
                             updatedAt: b.updatedAt?.epoch || null,
@@ -54,16 +69,27 @@ export default function PanelRootPage() {
         load();
     }, []);
 
+    // Conteo por comparsa
     const counts = useMemo(() => {
         const c = {};
-        COMPARSA_IDS.forEach((id) => (c[id] = 0));
+        COMPARSA_IDS.forEach((id) => {
+            c[id] = { total: 0, passistas: 0, ritmistas: 0 };
+        });
         bailarines.forEach((b) => {
-            c[b.comparsa] = (c[b.comparsa] || 0) + 1;
+            if (!c[b.comparsa]) c[b.comparsa] = { total: 0, passistas: 0, ritmistas: 0 };
+            c[b.comparsa].total++;
+            if (b.tipo === 'passista') c[b.comparsa].passistas++;
+            if (b.tipo === 'ritmista') c[b.comparsa].ritmistas++;
         });
         return c;
     }, [bailarines]);
 
-    const total = bailarines.length;
+    const totales = useMemo(() => {
+        const total = bailarines.length;
+        const passistas = bailarines.filter((b) => b.tipo === 'passista').length;
+        const ritmistas = bailarines.filter((b) => b.tipo === 'ritmista').length;
+        return { total, passistas, ritmistas };
+    }, [bailarines]);
 
     const filtrados = useMemo(() => {
         const term = q.trim().toLowerCase();
@@ -72,16 +98,18 @@ export default function PanelRootPage() {
         return bailarines
             .filter((b) => {
                 if (fComparsa !== 'todas' && b.comparsa !== fComparsa) return false;
-                if (term && !b.nombre.toLowerCase().includes(term) && !b.dni.includes(term)) return false;
+                const full = (b.nombreCompleto || '').toLowerCase();
+                if (term && !full.includes(term) && !b.dni.includes(term)) return false;
                 if (min !== null && (b.edad === null || b.edad < min)) return false;
                 if (max !== null && (b.edad === null || b.edad > max)) return false;
+                if (fTipo !== 'todos' && b.tipo !== fTipo) return false;
                 return true;
             })
             .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    }, [bailarines, q, fComparsa, fEdadMin, fEdadMax]);
+    }, [bailarines, q, fComparsa, fEdadMin, fEdadMax, fTipo]);
 
     const handleDelete = async (b) => {
-        if (!confirm(`¿Eliminar a ${b.nombre} (DNI ${b.dni}) de ${COMPARSAS[b.comparsa]?.nombre}?`)) return;
+        if (!confirm(`¿Eliminar a ${b.nombreCompleto} (DNI ${b.dni}) de ${COMPARSAS[b.comparsa]?.nombre}?`)) return;
         try {
             await remove(ref(db, `bailarines/${b.comparsa}/${b.id}`));
             setBailarines((prev) => prev.filter((x) => !(x.id === b.id && x.comparsa === b.comparsa)));
@@ -96,10 +124,18 @@ export default function PanelRootPage() {
         const rows = filtrados.map((b) => ({
             Comparsa: COMPARSAS[b.comparsa]?.nombre || b.comparsa,
             Club: COMPARSAS[b.comparsa]?.club || '',
+            Apellido: b.apellido,
             Nombre: b.nombre,
             DNI: b.dni,
             'Fecha Nac.': formatYMD(b.fechaNacimiento),
             Edad: b.edad ?? '',
+            Tipo: labelTipo(b.tipo).label,
+            Teléfono: b.telefono,
+            Instagram: b.instagram ? `@${b.instagram}` : '',
+            Menor: b.esMenor ? 'Sí' : 'No',
+            'Tutor (si menor)': b.tutor
+                ? `${b.tutor.apellido} ${b.tutor.nombre} - ${b.tutor.telefono}`
+                : '',
             Cargado: formatEpoch(b.createdAt),
             Modificado: b.updatedAt ? formatEpoch(b.updatedAt) : '',
         }));
@@ -112,6 +148,14 @@ export default function PanelRootPage() {
     const handleLogout = () => {
         localStorage.clear();
         window.location.href = '/';
+    };
+
+    const limpiarFiltros = () => {
+        setQ('');
+        setFComparsa('todas');
+        setFEdadMin('');
+        setFEdadMax('');
+        setFTipo('todos');
     };
 
     return (
@@ -128,44 +172,68 @@ export default function PanelRootPage() {
                 </header>
 
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
-                    <section>
-                        <div className="flex items-baseline justify-between mb-3">
-                            <h2 className="text-lg font-semibold text-gray-700">Inscriptos por comparsa</h2>
-                            <span className="text-sm text-gray-500">
-                                Total: <b className="text-gray-800">{total}</b>
-                            </span>
+                    {/* Totales globales */}
+                    <section className="grid grid-cols-3 gap-3">
+                        <div className="bg-white rounded-xl shadow-sm p-4">
+                            <p className="text-xs text-gray-500">Total general</p>
+                            <p className="text-3xl font-bold text-gray-800">{totales.total}</p>
                         </div>
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div className="bg-white rounded-xl shadow-sm p-4">
+                            <p className="text-xs text-gray-500">💃 Passistas</p>
+                            <p className="text-3xl font-bold text-pink-600">{totales.passistas}</p>
+                        </div>
+                        <div className="bg-white rounded-xl shadow-sm p-4">
+                            <p className="text-xs text-gray-500">🥁 Ritmistas</p>
+                            <p className="text-3xl font-bold text-amber-600">{totales.ritmistas}</p>
+                        </div>
+                    </section>
+
+                    {/* Conteos por comparsa */}
+                    <section>
+                        <h2 className="text-lg font-semibold text-gray-700 mb-3">
+                            Inscriptos por comparsa
+                        </h2>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                             {COMPARSA_IDS.map((id) => {
-                                const c = COMPARSAS[id];
+                                const comp = COMPARSAS[id];
+                                const cc = counts[id] || { total: 0, passistas: 0, ritmistas: 0 };
                                 return (
                                     <button
                                         key={id}
                                         onClick={() => setFComparsa(fComparsa === id ? 'todas' : id)}
                                         className={`text-left bg-white rounded-xl shadow-sm p-4 border-l-4 transition hover:shadow-md ${fComparsa === id ? 'ring-2 ring-pink-500' : ''
                                             }`}
-                                        style={{ borderLeftColor: c.color }}
+                                        style={{ borderLeftColor: comp.color }}
                                     >
-                                        <div className="flex items-center gap-2 mb-1">
+                                        <div className="flex items-center gap-2 mb-2">
                                             <Image
-                                                src={c.logo}
-                                                alt={c.nombre}
+                                                src={comp.logo}
+                                                alt={comp.nombre}
                                                 width={28}
                                                 height={28}
                                                 className="rounded-full bg-white"
                                             />
-                                            <p className="font-bold text-gray-800 text-sm">{c.nombre}</p>
+                                            <p className="font-bold text-gray-800 text-sm">{comp.nombre}</p>
                                         </div>
-                                        <p className="text-3xl font-bold" style={{ color: c.color }}>
-                                            {counts[id] || 0}
+                                        <p className="text-3xl font-bold" style={{ color: comp.color }}>
+                                            {cc.total}
                                         </p>
-                                        <p className="text-xs text-gray-500">{c.club}</p>
+                                        <div className="flex gap-2 mt-2 text-xs">
+                                            <span className="text-pink-600 font-semibold">
+                                                💃 {cc.passistas}
+                                            </span>
+                                            <span className="text-amber-600 font-semibold">
+                                                🥁 {cc.ritmistas}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-gray-500 mt-1">{comp.club}</p>
                                     </button>
                                 );
                             })}
                         </div>
                     </section>
 
+                    {/* Filtros */}
                     <section className="bg-white rounded-xl shadow-sm p-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                             <input
@@ -178,7 +246,7 @@ export default function PanelRootPage() {
                             <select
                                 value={fComparsa}
                                 onChange={(e) => setFComparsa(e.target.value)}
-                                className="px-3 py-2 rounded-lg border border-gray-300 text-sm"
+                                className="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white"
                             >
                                 <option value="todas">Todas las comparsas</option>
                                 {COMPARSA_IDS.map((id) => (
@@ -187,22 +255,33 @@ export default function PanelRootPage() {
                                     </option>
                                 ))}
                             </select>
-                            <input
-                                type="number"
-                                value={fEdadMin}
-                                onChange={(e) => setFEdadMin(e.target.value)}
-                                placeholder="Edad mín."
-                                min="0"
-                                className="px-3 py-2 rounded-lg border border-gray-300 text-sm"
-                            />
-                            <input
-                                type="number"
-                                value={fEdadMax}
-                                onChange={(e) => setFEdadMax(e.target.value)}
-                                placeholder="Edad máx."
-                                min="0"
-                                className="px-3 py-2 rounded-lg border border-gray-300 text-sm"
-                            />
+                            <select
+                                value={fTipo}
+                                onChange={(e) => setFTipo(e.target.value)}
+                                className="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white"
+                            >
+                                <option value="todos">Todos los tipos</option>
+                                <option value="passista">💃 Passistas</option>
+                                <option value="ritmista">🥁 Ritmistas</option>
+                            </select>
+                            <div className="grid grid-cols-2 gap-2">
+                                <input
+                                    type="number"
+                                    value={fEdadMin}
+                                    onChange={(e) => setFEdadMin(e.target.value)}
+                                    placeholder="Edad mín."
+                                    min="0"
+                                    className="px-3 py-2 rounded-lg border border-gray-300 text-sm"
+                                />
+                                <input
+                                    type="number"
+                                    value={fEdadMax}
+                                    onChange={(e) => setFEdadMax(e.target.value)}
+                                    placeholder="Edad máx."
+                                    min="0"
+                                    className="px-3 py-2 rounded-lg border border-gray-300 text-sm"
+                                />
+                            </div>
                         </div>
 
                         <div className="flex flex-wrap items-center justify-between gap-3 mt-3">
@@ -211,12 +290,7 @@ export default function PanelRootPage() {
                             </span>
                             <div className="flex gap-2">
                                 <button
-                                    onClick={() => {
-                                        setQ('');
-                                        setFComparsa('todas');
-                                        setFEdadMin('');
-                                        setFEdadMax('');
-                                    }}
+                                    onClick={limpiarFiltros}
                                     className="px-3 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-100"
                                 >
                                     Limpiar filtros
@@ -232,6 +306,7 @@ export default function PanelRootPage() {
                         </div>
                     </section>
 
+                    {/* Tabla */}
                     <section className="bg-white rounded-xl shadow-sm overflow-hidden">
                         {loading ? (
                             <p className="p-6 text-gray-500">Cargando…</p>
@@ -247,6 +322,7 @@ export default function PanelRootPage() {
                                             <th className="text-left px-3 py-2">DNI</th>
                                             <th className="text-left px-3 py-2">Nacimiento</th>
                                             <th className="text-left px-3 py-2">Edad</th>
+                                            <th className="text-left px-3 py-2">Tipo</th>
                                             <th className="text-left px-3 py-2">Cargado</th>
                                             <th className="text-left px-3 py-2">Modificado</th>
                                             <th className="px-3 py-2"></th>
@@ -254,7 +330,8 @@ export default function PanelRootPage() {
                                     </thead>
                                     <tbody>
                                         {filtrados.map((b) => {
-                                            const c = COMPARSAS[b.comparsa];
+                                            const comp = COMPARSAS[b.comparsa];
+                                            const t = labelTipo(b.tipo);
                                             return (
                                                 <tr
                                                     key={`${b.comparsa}-${b.id}`}
@@ -262,33 +339,55 @@ export default function PanelRootPage() {
                                                 >
                                                     <td
                                                         className="px-3 py-2 whitespace-nowrap"
-                                                        style={{ color: c?.color, fontWeight: 600 }}
+                                                        style={{ color: comp?.color, fontWeight: 600 }}
                                                     >
                                                         <div className="flex items-center gap-2">
-                                                            {c && (
+                                                            {comp && (
                                                                 <Image
-                                                                    src={c.logo}
-                                                                    alt={c.nombre}
+                                                                    src={comp.logo}
+                                                                    alt={comp.nombre}
                                                                     width={20}
                                                                     height={20}
                                                                     className="rounded-full"
                                                                 />
                                                             )}
-                                                            {c?.nombre || b.comparsa}
+                                                            <span className="text-xs sm:text-sm">
+                                                                {comp?.nombre || b.comparsa}
+                                                            </span>
                                                         </div>
                                                     </td>
-                                                    <td className="px-3 py-2 whitespace-nowrap">{b.nombre}</td>
+                                                    <td className="px-3 py-2 whitespace-nowrap">
+                                                        <div className="flex items-center gap-1">
+                                                            {b.esMenor && (
+                                                                <span title="Menor" className="text-amber-500">👶</span>
+                                                            )}
+                                                            {b.nombreCompleto}
+                                                        </div>
+                                                    </td>
                                                     <td className="px-3 py-2 whitespace-nowrap">{b.dni}</td>
                                                     <td className="px-3 py-2 whitespace-nowrap">
                                                         {formatYMD(b.fechaNacimiento)}
                                                     </td>
                                                     <td className="px-3 py-2 whitespace-nowrap">{b.edad ?? '-'}</td>
+                                                    <td className="px-3 py-2 whitespace-nowrap">
+                                                        <span
+                                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
+                                                            style={{
+                                                                backgroundColor: `${t.color}15`,
+                                                                color: t.color,
+                                                            }}
+                                                        >
+                                                            {t.emoji} {t.label}
+                                                        </span>
+                                                    </td>
                                                     <td className="px-3 py-2 whitespace-nowrap text-gray-500 text-xs">
                                                         {formatEpoch(b.createdAt)}
                                                     </td>
                                                     <td className="px-3 py-2 whitespace-nowrap text-xs">
                                                         {b.updatedAt ? (
-                                                            <span className="text-amber-600">✏️ {formatEpoch(b.updatedAt)}</span>
+                                                            <span className="text-amber-600">
+                                                                ✏️ {formatEpoch(b.updatedAt)}
+                                                            </span>
                                                         ) : (
                                                             <span className="text-gray-400">—</span>
                                                         )}

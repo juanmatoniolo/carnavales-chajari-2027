@@ -11,19 +11,25 @@ import { ref, get, remove, update } from 'firebase/database';
 import { COMPARSAS } from '../../lib/comparsas';
 import { calcEdad, formatYMD, formatEpoch } from '../../lib/dates';
 
+// 🆕 Helper para mostrar el tipo
+export function labelTipo(tipo) {
+    if (tipo === 'passista') return { emoji: '💃', label: 'Passista', color: '#ec4899' };
+    if (tipo === 'ritmista') return { emoji: '🥁', label: 'Ritmista', color: '#f59e0b' };
+    return { emoji: '—', label: 'Sin tipo', color: '#9ca3af' };
+}
+
 export default function InicioPage() {
     const [usuario, setUsuario] = useState('');
     const [comparsa, setComparsa] = useState('');
     const [allBailarines, setAllBailarines] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [tab, setTab] = useState('comparsa'); // 'general' | 'comparsa'
+    const [tab, setTab] = useState('comparsa');
 
-    // Filtros
     const [q, setQ] = useState('');
     const [fEdadMin, setFEdadMin] = useState('');
     const [fEdadMax, setFEdadMax] = useState('');
+    const [fTipo, setFTipo] = useState('todos'); // 🆕
 
-    // Modales
     const [showAdd, setShowAdd] = useState(false);
     const [showBulk, setShowBulk] = useState(false);
     const [editing, setEditing] = useState(null);
@@ -36,7 +42,6 @@ export default function InicioPage() {
         setComparsa(localStorage.getItem('comparsa') || '');
     }, []);
 
-    // Cargar TODOS los bailarines (de todas las comparsas)
     const load = async () => {
         setLoading(true);
         try {
@@ -55,6 +60,7 @@ export default function InicioPage() {
                                 b.nombreCompleto || `${b.apellido || ''} ${b.nombre || ''}`.trim(),
                             dni: b.dni || '',
                             fechaNacimiento: b.fechaNacimiento || '',
+                            tipo: b.tipo || '', // 🆕
                             telefono: b.telefono || '',
                             instagram: b.instagram || '',
                             esMenor: b.esMenor || false,
@@ -82,15 +88,13 @@ export default function InicioPage() {
 
     const c = COMPARSAS[comparsa] || null;
 
-    // ============ FUENTE DE DATOS SEGÚN TAB ============
     const sourceList = useMemo(() => {
         if (tab === 'comparsa') {
             return allBailarines.filter((b) => b.comparsa === comparsa);
         }
-        return allBailarines; // general
+        return allBailarines;
     }, [allBailarines, tab, comparsa]);
 
-    // ============ FILTROS ============
     const filtrados = useMemo(() => {
         const term = q.trim().toLowerCase();
         const min = fEdadMin === '' ? null : Number(fEdadMin);
@@ -101,26 +105,25 @@ export default function InicioPage() {
                 if (term && !full.includes(term) && !b.dni.includes(term)) return false;
                 if (min !== null && (b.edad === null || b.edad < min)) return false;
                 if (max !== null && (b.edad === null || b.edad > max)) return false;
+                if (fTipo !== 'todos' && b.tipo !== fTipo) return false; // 🆕
                 return true;
             })
             .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    }, [sourceList, q, fEdadMin, fEdadMax]);
+    }, [sourceList, q, fEdadMin, fEdadMax, fTipo]);
 
-    // ============ STATS (según tab) ============
     const stats = useMemo(() => {
         const total = sourceList.length;
-        const editados = sourceList.filter((b) => b.updatedAt).length;
+        const passistas = sourceList.filter((b) => b.tipo === 'passista').length;
+        const ritmistas = sourceList.filter((b) => b.tipo === 'ritmista').length;
         const conEdad = sourceList.filter((b) => b.edad !== null);
         const promedio = conEdad.length
             ? Math.round(conEdad.reduce((s, b) => s + b.edad, 0) / conEdad.length)
             : '-';
-        return { total, editados, promedio };
+        return { total, passistas, ritmistas, promedio };
     }, [sourceList]);
 
-    // Solo puede editar/eliminar si el bailarín pertenece a su propia comparsa
     const canEdit = (b) => b.comparsa === comparsa;
 
-    // ============ ACCIONES ============
     const handleDelete = async (b) => {
         if (!canEdit(b)) return;
         if (!confirm(`¿Eliminar a ${b.nombreCompleto} (DNI ${b.dni})?`)) return;
@@ -145,6 +148,7 @@ export default function InicioPage() {
             nombre: b.nombre,
             dni: b.dni,
             fechaNacimiento: b.fechaNacimiento,
+            tipo: b.tipo || '', // 🆕
             telefono: b.telefono,
             instagram: b.instagram,
         });
@@ -166,6 +170,10 @@ export default function InicioPage() {
             setEditError('Fecha inválida.');
             return;
         }
+        if (!editing.tipo) {
+            setEditError('Seleccioná Passista o Ritmista.');
+            return;
+        }
 
         setSaving(true);
         try {
@@ -175,14 +183,12 @@ export default function InicioPage() {
                 nombreCompleto: `${editing.apellido.trim()} ${editing.nombre.trim()}`,
                 dni: editing.dni.replace(/\D/g, ''),
                 fechaNacimiento: editing.fechaNacimiento,
+                tipo: editing.tipo,
                 telefono: editing.telefono.trim(),
                 instagram: editing.instagram.trim().replace(/^@/, ''),
                 updatedAt: { epoch: Date.now(), iso: new Date().toISOString() },
             };
-            await update(
-                ref(db, `bailarines/${editing.comparsa}/${editing.id}`),
-                payload
-            );
+            await update(ref(db, `bailarines/${editing.comparsa}/${editing.id}`), payload);
 
             setAllBailarines((prev) =>
                 prev.map((x) =>
@@ -215,6 +221,7 @@ export default function InicioPage() {
             DNI: b.dni,
             'Fecha Nac.': formatYMD(b.fechaNacimiento),
             Edad: b.edad ?? '',
+            Tipo: labelTipo(b.tipo).label,
             Teléfono: b.telefono,
             Instagram: b.instagram ? `@${b.instagram}` : '',
             Menor: b.esMenor ? 'Sí' : 'No',
@@ -228,17 +235,13 @@ export default function InicioPage() {
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Bailarines');
         const sufijo = tab === 'comparsa' ? comparsa : 'general';
-        XLSX.writeFile(
-            wb,
-            `bailarines_${sufijo}_${new Date().toISOString().slice(0, 10)}.xlsx`
-        );
+        XLSX.writeFile(wb, `bailarines_${sufijo}_${new Date().toISOString().slice(0, 10)}.xlsx`);
     };
 
     const compartirLink = async () => {
         const url = `${window.location.origin}/inscripcion/${comparsa}`;
         const titulo = `Inscripción ${c?.nombre || comparsa}`;
-        const texto = `Inscribite a la comparsa ${c?.nombre || comparsa} (${c?.club || ''
-            }) para los Carnavales 2027 🎭`;
+        const texto = `Inscribite a la comparsa ${c?.nombre || comparsa} (${c?.club || ''}) para los Carnavales 2027 🎭`;
         try {
             if (navigator.share) {
                 await navigator.share({ title: titulo, text: texto, url });
@@ -268,29 +271,20 @@ export default function InicioPage() {
         setQ('');
         setFEdadMin('');
         setFEdadMax('');
+        setFTipo('todos');
     };
 
     return (
         <ProtectedRoute requireTipo="usuario">
             <main className="min-h-screen bg-gray-50 pb-24">
-                {/* Header */}
                 <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
                     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3 min-w-0">
                             {c && (
-                                <Image
-                                    src={c.logo}
-                                    alt={c.nombre}
-                                    width={40}
-                                    height={40}
-                                    className="rounded-full bg-white shrink-0"
-                                />
+                                <Image src={c.logo} alt={c.nombre} width={40} height={40} className="rounded-full bg-white shrink-0" />
                             )}
                             <div className="min-w-0">
-                                <h1
-                                    className="font-bold text-gray-800 truncate"
-                                    style={{ color: c?.color }}
-                                >
+                                <h1 className="font-bold text-gray-800 truncate" style={{ color: c?.color }}>
                                     {c?.nombre || comparsa}
                                 </h1>
                                 <p className="text-xs text-gray-500 truncate">
@@ -306,12 +300,11 @@ export default function InicioPage() {
                         </button>
                     </div>
 
-                    {/* Tabs */}
                     <div className="max-w-6xl mx-auto px-4 sm:px-6">
-                        <div className="flex gap-1 -mb-px">
+                        <div className="flex gap-1 -mb-px overflow-x-auto">
                             <button
                                 onClick={() => setTab('general')}
-                                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${tab === 'general'
+                                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition whitespace-nowrap ${tab === 'general'
                                     ? 'border-pink-600 text-pink-700'
                                     : 'border-transparent text-gray-500 hover:text-gray-800'
                                     }`}
@@ -323,7 +316,7 @@ export default function InicioPage() {
                             </button>
                             <button
                                 onClick={() => setTab('comparsa')}
-                                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition ${tab === 'comparsa'
+                                className={`px-4 py-2.5 text-sm font-semibold border-b-2 transition whitespace-nowrap ${tab === 'comparsa'
                                     ? 'border-pink-600 text-pink-700'
                                     : 'border-transparent text-gray-500 hover:text-gray-800'
                                     }`}
@@ -339,9 +332,9 @@ export default function InicioPage() {
 
                 <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-5 space-y-5">
                     {/* Stats */}
-                    <section className="grid grid-cols-3 gap-3">
+                    <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4">
-                            <p className="text-xs text-gray-500 truncate">Total inscriptos</p>
+                            <p className="text-xs text-gray-500 truncate">Total</p>
                             <p
                                 className="text-2xl sm:text-3xl font-bold"
                                 style={{ color: tab === 'comparsa' ? c?.color : '#374151' }}
@@ -349,16 +342,26 @@ export default function InicioPage() {
                                 {stats.total}
                             </p>
                         </div>
-
                         <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4">
-                            <p className="text-xs text-gray-500 truncate">Promedio edad</p>
+                            <p className="text-xs text-gray-500 truncate">💃 Passistas</p>
+                            <p className="text-2xl sm:text-3xl font-bold text-pink-600">
+                                {stats.passistas}
+                            </p>
+                        </div>
+                        <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4">
+                            <p className="text-xs text-gray-500 truncate">🥁 Ritmistas</p>
+                            <p className="text-2xl sm:text-3xl font-bold text-amber-600">
+                                {stats.ritmistas}
+                            </p>
+                        </div>
+                        <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4">
+                            <p className="text-xs text-gray-500 truncate">Prom. edad</p>
                             <p className="text-2xl sm:text-3xl font-bold text-gray-700">
                                 {stats.promedio}
                             </p>
                         </div>
                     </section>
 
-                    {/* Acciones — solo en tab Comparsa */}
                     {tab === 'comparsa' && (
                         <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <button
@@ -390,7 +393,7 @@ export default function InicioPage() {
 
                     {/* Filtros */}
                     <section className="bg-white rounded-xl shadow-sm p-4">
-                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                             <input
                                 type="text"
                                 value={q}
@@ -398,6 +401,15 @@ export default function InicioPage() {
                                 placeholder="Buscar por nombre, apellido o DNI…"
                                 className="sm:col-span-2 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-pink-500 outline-none text-sm"
                             />
+                            <select
+                                value={fTipo}
+                                onChange={(e) => setFTipo(e.target.value)}
+                                className="px-3 py-2 rounded-lg border border-gray-300 text-sm bg-white"
+                            >
+                                <option value="todos">Todos los tipos</option>
+                                <option value="passista">💃 Passistas</option>
+                                <option value="ritmista">🥁 Ritmistas</option>
+                            </select>
                             <input
                                 type="number"
                                 value={fEdadMin}
@@ -460,8 +472,8 @@ export default function InicioPage() {
                                             <th className="text-left px-3 py-2">DNI</th>
                                             <th className="text-left px-3 py-2">Nacimiento</th>
                                             <th className="text-left px-3 py-2">Edad</th>
+                                            <th className="text-left px-3 py-2">Tipo</th>
                                             <th className="text-left px-3 py-2">Tel.</th>
-                                            <th className="text-left px-3 py-2">Cargado</th>
                                             <th className="text-left px-3 py-2">Modificado</th>
                                             {tab === 'comparsa' && <th className="px-3 py-2"></th>}
                                         </tr>
@@ -470,6 +482,7 @@ export default function InicioPage() {
                                         {filtrados.map((b) => {
                                             const bc = COMPARSAS[b.comparsa];
                                             const editable = canEdit(b);
+                                            const t = labelTipo(b.tipo);
                                             return (
                                                 <tr
                                                     key={`${b.comparsa}-${b.id}`}
@@ -510,11 +523,19 @@ export default function InicioPage() {
                                                         {formatYMD(b.fechaNacimiento)}
                                                     </td>
                                                     <td className="px-3 py-2 whitespace-nowrap">{b.edad ?? '-'}</td>
+                                                    <td className="px-3 py-2 whitespace-nowrap">
+                                                        <span
+                                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
+                                                            style={{
+                                                                backgroundColor: `${t.color}15`,
+                                                                color: t.color,
+                                                            }}
+                                                        >
+                                                            {t.emoji} {t.label}
+                                                        </span>
+                                                    </td>
                                                     <td className="px-3 py-2 whitespace-nowrap text-xs">
                                                         {b.telefono || '-'}
-                                                    </td>
-                                                    <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-500">
-                                                        {formatEpoch(b.createdAt)}
                                                     </td>
                                                     <td className="px-3 py-2 whitespace-nowrap text-xs">
                                                         {b.updatedAt ? (
@@ -551,7 +572,6 @@ export default function InicioPage() {
                     </section>
                 </div>
 
-                {/* Botón flotante para compartir — solo en tab Comparsa */}
                 {tab === 'comparsa' && (
                     <button
                         onClick={compartirLink}
@@ -562,7 +582,6 @@ export default function InicioPage() {
                     </button>
                 )}
 
-                {/* Modal: alta individual */}
                 {showAdd && (
                     <div className="fixed inset-0 bg-black/50 z-50 overflow-y-auto">
                         <div className="min-h-full flex items-start sm:items-center justify-center p-4 pt-20 sm:pt-4 pb-10">
@@ -597,7 +616,6 @@ export default function InicioPage() {
                     </div>
                 )}
 
-                {/* Modal: carga masiva */}
                 {showBulk && (
                     <ModalCargaMasiva
                         comparsaId={comparsa}
@@ -610,7 +628,6 @@ export default function InicioPage() {
                     />
                 )}
 
-                {/* Modal edición */}
                 {editing && (
                     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
                         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 sm:p-6">
@@ -621,46 +638,33 @@ export default function InicioPage() {
                             <div className="space-y-3">
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
-                                        <label className="block text-xs font-semibold text-gray-600 mb-1">
-                                            Apellido
-                                        </label>
+                                        <label className="block text-xs font-semibold text-gray-600 mb-1">Apellido</label>
                                         <input
                                             type="text"
                                             value={editing.apellido}
-                                            onChange={(e) =>
-                                                setEditing({ ...editing, apellido: e.target.value })
-                                            }
+                                            onChange={(e) => setEditing({ ...editing, apellido: e.target.value })}
                                             className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm"
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-semibold text-gray-600 mb-1">
-                                            Nombre
-                                        </label>
+                                        <label className="block text-xs font-semibold text-gray-600 mb-1">Nombre</label>
                                         <input
                                             type="text"
                                             value={editing.nombre}
-                                            onChange={(e) =>
-                                                setEditing({ ...editing, nombre: e.target.value })
-                                            }
+                                            onChange={(e) => setEditing({ ...editing, nombre: e.target.value })}
                                             className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm"
                                         />
                                     </div>
                                 </div>
 
                                 <div>
-                                    <label className="block text-xs font-semibold text-gray-600 mb-1">
-                                        DNI
-                                    </label>
+                                    <label className="block text-xs font-semibold text-gray-600 mb-1">DNI</label>
                                     <input
                                         type="text"
                                         inputMode="numeric"
                                         value={editing.dni}
                                         onChange={(e) =>
-                                            setEditing({
-                                                ...editing,
-                                                dni: e.target.value.replace(/\D/g, ''),
-                                            })
+                                            setEditing({ ...editing, dni: e.target.value.replace(/\D/g, '') })
                                         }
                                         className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm"
                                     />
@@ -673,39 +677,57 @@ export default function InicioPage() {
                                     <input
                                         type="date"
                                         value={editing.fechaNacimiento}
-                                        onChange={(e) =>
-                                            setEditing({ ...editing, fechaNacimiento: e.target.value })
-                                        }
+                                        onChange={(e) => setEditing({ ...editing, fechaNacimiento: e.target.value })}
                                         className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm"
                                     />
                                 </div>
 
+                                {/* 🆕 Tipo */}
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-600 mb-1">
+                                        Tipo de integrante
+                                    </label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditing({ ...editing, tipo: 'passista' })}
+                                            className={`px-3 py-2 rounded-lg border-2 text-sm font-semibold transition ${editing.tipo === 'passista'
+                                                ? 'border-pink-500 bg-pink-50 text-pink-700'
+                                                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                                                }`}
+                                        >
+                                            💃 Passista
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditing({ ...editing, tipo: 'ritmista' })}
+                                            className={`px-3 py-2 rounded-lg border-2 text-sm font-semibold transition ${editing.tipo === 'ritmista'
+                                                ? 'border-amber-500 bg-amber-50 text-amber-700'
+                                                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                                                }`}
+                                        >
+                                            🥁 Ritmista
+                                        </button>
+                                    </div>
+                                </div>
+
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
-                                        <label className="block text-xs font-semibold text-gray-600 mb-1">
-                                            Teléfono
-                                        </label>
+                                        <label className="block text-xs font-semibold text-gray-600 mb-1">Teléfono</label>
                                         <input
                                             type="tel"
                                             value={editing.telefono}
-                                            onChange={(e) =>
-                                                setEditing({ ...editing, telefono: e.target.value })
-                                            }
+                                            onChange={(e) => setEditing({ ...editing, telefono: e.target.value })}
                                             className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm"
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-semibold text-gray-600 mb-1">
-                                            Instagram
-                                        </label>
+                                        <label className="block text-xs font-semibold text-gray-600 mb-1">Instagram</label>
                                         <input
                                             type="text"
                                             value={editing.instagram}
                                             onChange={(e) =>
-                                                setEditing({
-                                                    ...editing,
-                                                    instagram: e.target.value.replace(/^@/, ''),
-                                                })
+                                                setEditing({ ...editing, instagram: e.target.value.replace(/^@/, '') })
                                             }
                                             className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm"
                                         />

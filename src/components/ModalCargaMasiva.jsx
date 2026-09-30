@@ -9,6 +9,8 @@ const YMD_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const DMY_RE = /^(0?[1-9]|[12]\d|3[01])[\/\-](0?[1-9]|1[0-2])[\/\-](\d{4})$/;
 const pad2 = (n) => String(n).padStart(2, '0');
 
+const TIPOS_VALIDOS = ['passista', 'ritmista'];
+
 function normalizeDate(raw) {
     if (raw == null) return '';
     if (typeof raw === 'number' && isFinite(raw)) {
@@ -24,6 +26,14 @@ function normalizeDate(raw) {
     return '';
 }
 
+function normalizeTipo(raw) {
+    const s = String(raw || '').trim().toLowerCase();
+    if (!s) return '';
+    if (s.startsWith('pass')) return 'passista';
+    if (s.startsWith('ritm') || s.startsWith('batu') || s.startsWith('perc')) return 'ritmista';
+    return s;
+}
+
 function stamp() {
     return { epoch: Date.now(), iso: new Date().toISOString() };
 }
@@ -37,9 +47,6 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
     const [error, setError] = useState('');
     const [msg, setMsg] = useState('');
 
-    // ------------------------------------------------------
-    // Descargar plantilla con ejemplo
-    // ------------------------------------------------------
     const descargarPlantilla = async () => {
         try {
             const XLSX = await import('xlsx');
@@ -49,6 +56,7 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                     nombre: 'Juan',
                     dni: '40123456',
                     fechaNacimiento: '21/05/1995',
+                    tipo: 'passista',
                     telefono: '3456123456',
                     instagram: 'juanp',
                 },
@@ -57,15 +65,17 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                     nombre: 'Ana',
                     dni: '35234567',
                     fechaNacimiento: '01/12/1992',
+                    tipo: 'ritmista',
                     telefono: '3456987654',
                     instagram: 'anag',
                 },
             ];
             const ws = XLSX.utils.json_to_sheet(data, {
-                header: ['apellido', 'nombre', 'dni', 'fechaNacimiento', 'telefono', 'instagram'],
+                header: ['apellido', 'nombre', 'dni', 'fechaNacimiento', 'tipo', 'telefono', 'instagram'],
             });
             ws['!cols'] = [
-                { wch: 15 }, { wch: 15 }, { wch: 12 }, { wch: 16 }, { wch: 15 }, { wch: 15 },
+                { wch: 15 }, { wch: 15 }, { wch: 12 }, { wch: 16 },
+                { wch: 12 }, { wch: 15 }, { wch: 15 },
             ];
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Integrantes');
@@ -76,23 +86,23 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
         }
     };
 
-    // ------------------------------------------------------
-    // Parser (Excel y pegado)
-    // ------------------------------------------------------
     const buildRow = (obj, i) => {
         const apellido = String(obj.apellido || '').trim();
         const nombre = String(obj.nombre || '').trim();
         const dni = String(obj.dni || '').replace(/\D/g, '');
         const fechaRaw = obj.fechaRaw ?? '';
+        const tipo = normalizeTipo(obj.tipo);
         const telefono = String(obj.telefono || '').trim();
         const instagram = String(obj.instagram || '').trim().replace(/^@/, '');
         const fecha = normalizeDate(fechaRaw);
 
-        const valido = !!(apellido && nombre && dni.length >= 6 && YMD_RE.test(fecha));
+        const valido =
+            !!(apellido && nombre && dni.length >= 6 && YMD_RE.test(fecha) && TIPOS_VALIDOS.includes(tipo));
         let motivo = '';
         if (!apellido || !nombre) motivo = 'Falta apellido/nombre';
         else if (dni.length < 6) motivo = 'DNI inválido';
         else if (!YMD_RE.test(fecha)) motivo = 'Fecha inválida';
+        else if (!TIPOS_VALIDOS.includes(tipo)) motivo = 'Tipo inválido (passista/ritmista)';
 
         return {
             row: i + 1,
@@ -101,6 +111,7 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
             dni,
             fechaRaw: String(fechaRaw ?? ''),
             _fecha: fecha,
+            tipo,
             telefono,
             instagram,
             valido,
@@ -117,6 +128,7 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
         const idxNom = headers.findIndex((h) => ['nombre', 'nombres'].includes(h));
         const idxDni = headers.findIndex((h) => ['dni', 'documento'].includes(h));
         const idxFecha = headers.findIndex((h) => ['fechanacimiento', 'fecha', 'nacimiento'].includes(h));
+        const idxTipo = headers.findIndex((h) => ['tipo', 'categoria', 'rol'].includes(h));
         const idxTel = headers.findIndex((h) => ['telefono', 'celular', 'tel'].includes(h));
         const idxIg = headers.findIndex((h) => ['instagram', 'ig'].includes(h));
 
@@ -132,8 +144,9 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                     nombre: get(idxNom, 1),
                     dni: get(idxDni, 2),
                     fechaRaw: get(idxFecha, 3),
-                    telefono: get(idxTel, 4),
-                    instagram: get(idxIg, 5),
+                    tipo: get(idxTipo, 4),
+                    telefono: get(idxTel, 5),
+                    instagram: get(idxIg, 6),
                 },
                 i
             );
@@ -172,6 +185,7 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                         nombre: nk.nombre || nk.nombres || '',
                         dni: nk.dni || nk.documento || '',
                         fechaRaw: nk.fechanacimiento ?? nk.fecha ?? nk.nacimiento ?? '',
+                        tipo: nk.tipo || nk.categoria || nk.rol || '',
                         telefono: nk.telefono || nk.celular || nk.tel || '',
                         instagram: nk.instagram || nk.ig || '',
                     },
@@ -189,21 +203,26 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
     const updateRow = (idx, field, value) => {
         setPreview((prev) => {
             const next = [...prev];
-            const r = { ...next[idx], [field]: field === 'dni' ? String(value).replace(/\D/g, '') : value };
+            const r = { ...next[idx] };
+
+            if (field === 'dni') r.dni = String(value).replace(/\D/g, '');
+            else if (field === 'tipo') r.tipo = normalizeTipo(value);
+            else r[field] = value;
+
             const fecha = normalizeDate(r.fechaRaw);
-            const valido = !!(r.apellido && r.nombre && r.dni.length >= 6 && YMD_RE.test(fecha));
+            const valido =
+                !!(r.apellido && r.nombre && r.dni.length >= 6 && YMD_RE.test(fecha) && TIPOS_VALIDOS.includes(r.tipo));
             let motivo = '';
             if (!r.apellido || !r.nombre) motivo = 'Falta apellido/nombre';
             else if (r.dni.length < 6) motivo = 'DNI inválido';
             else if (!YMD_RE.test(fecha)) motivo = 'Fecha inválida';
+            else if (!TIPOS_VALIDOS.includes(r.tipo)) motivo = 'Tipo inválido';
+
             next[idx] = { ...r, _fecha: fecha, valido, motivo };
             return next;
         });
     };
 
-    // ------------------------------------------------------
-    // Confirmar importación
-    // ------------------------------------------------------
     const confirmar = async () => {
         setError('');
         setMsg('');
@@ -212,7 +231,6 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
 
         setSaving(true);
         try {
-            // 1) Duplicados dentro del archivo
             const dnis = validas.map((v) => v.dni);
             const dupInterno = dnis.find((d, i) => dnis.indexOf(d) !== i);
             if (dupInterno) {
@@ -221,7 +239,6 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                 return;
             }
 
-            // 2) Duplicados contra la DB
             const snap = await get(ref(db, `bailarines/${comparsaId}`));
             const existentes = new Set();
             if (snap.exists()) {
@@ -238,7 +255,6 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                 return;
             }
 
-            // 3) Guardar
             const updates = {};
             validas.forEach((r) => {
                 const newRef = push(ref(db, `bailarines/${comparsaId}`));
@@ -248,6 +264,7 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                     nombreCompleto: `${r.apellido} ${r.nombre}`,
                     dni: r.dni,
                     fechaNacimiento: r._fecha,
+                    tipo: r.tipo,
                     telefono: r.telefono,
                     instagram: r.instagram,
                     esMenor: false,
@@ -270,12 +287,9 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
         }
     };
 
-    const inputCls = 'px-3 py-2 rounded-lg border border-gray-300 text-sm';
-
     return (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 overflow-y-auto">
             <div className="bg-white w-full sm:max-w-4xl sm:rounded-2xl shadow-2xl max-h-[95vh] sm:max-h-[90vh] flex flex-col mt-12 sm:mt-0 rounded-t-2xl">
-                {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b sticky top-0 bg-white z-10">
                     <h3 className="text-lg font-bold text-gray-800">📥 Carga masiva</h3>
                     <button
@@ -287,9 +301,7 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                     </button>
                 </div>
 
-                {/* Body scrolleable */}
                 <div className="p-4 overflow-y-auto flex-1 space-y-4">
-                    {/* Tabs */}
                     <div className="flex gap-2">
                         <button
                             onClick={() => setTab('excel')}
@@ -307,7 +319,6 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                         </button>
                     </div>
 
-                    {/* Tab Excel */}
                     {tab === 'excel' && (
                         <div className="space-y-3">
                             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
@@ -317,6 +328,9 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                                     <code className="bg-white/70 px-1 rounded">nombre</code>,{' '}
                                     <code className="bg-white/70 px-1 rounded">dni</code>,{' '}
                                     <code className="bg-white/70 px-1 rounded">fechaNacimiento</code>,{' '}
+                                    <code className="bg-white/70 px-1 rounded">tipo</code>{' '}
+                                    (<span className="text-pink-700 font-bold">passista</span> o{' '}
+                                    <span className="text-pink-700 font-bold">ritmista</span>),{' '}
                                     <code className="bg-white/70 px-1 rounded">telefono</code>,{' '}
                                     <code className="bg-white/70 px-1 rounded">instagram</code>.
                                     <br />
@@ -346,16 +360,15 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                         </div>
                     )}
 
-                    {/* Tab Pegar */}
                     {tab === 'pegar' && (
                         <div className="space-y-3">
                             <textarea
                                 rows={6}
                                 value={pasted}
                                 onChange={(e) => setPasted(e.target.value)}
-                                placeholder={`apellido,nombre,dni,fechaNacimiento,telefono,instagram
-Pérez,Juan,12345678,21/05/1990,3456111111,juanp
-Gómez,Ana,34566789,01/12/1992,3456222222,anag`}
+                                placeholder={`apellido,nombre,dni,fechaNacimiento,tipo,telefono,instagram
+Pérez,Juan,12345678,21/05/1990,passista,3456111111,juanp
+Gómez,Ana,34566789,01/12/1992,ritmista,3456222222,anag`}
                                 className="w-full px-3 py-2 rounded-lg border border-gray-300 text-xs sm:text-sm font-mono"
                             />
                             <button
@@ -368,7 +381,6 @@ Gómez,Ana,34566789,01/12/1992,3456222222,anag`}
                         </div>
                     )}
 
-                    {/* Preview */}
                     {preview.length > 0 && (
                         <div className="space-y-2">
                             <p className="text-sm text-gray-600">
@@ -385,6 +397,7 @@ Gómez,Ana,34566789,01/12/1992,3456222222,anag`}
                                             <th className="px-2 py-1 text-left">Nombre</th>
                                             <th className="px-2 py-1 text-left">DNI</th>
                                             <th className="px-2 py-1 text-left">Fecha</th>
+                                            <th className="px-2 py-1 text-left">Tipo</th>
                                             <th className="px-2 py-1 text-left">Teléfono</th>
                                             <th className="px-2 py-1 text-left">IG</th>
                                             <th className="px-2 py-1 text-left">Estado</th>
@@ -421,6 +434,17 @@ Gómez,Ana,34566789,01/12/1992,3456222222,anag`}
                                                         onChange={(e) => updateRow(idx, 'fechaRaw', e.target.value)}
                                                         className="w-24 px-1 py-0.5 border rounded text-xs"
                                                     />
+                                                </td>
+                                                <td className="px-2 py-1">
+                                                    <select
+                                                        value={r.tipo}
+                                                        onChange={(e) => updateRow(idx, 'tipo', e.target.value)}
+                                                        className="w-24 px-1 py-0.5 border rounded text-xs bg-white"
+                                                    >
+                                                        <option value="">—</option>
+                                                        <option value="passista">💃 Passista</option>
+                                                        <option value="ritmista">🥁 Ritmista</option>
+                                                    </select>
                                                 </td>
                                                 <td className="px-2 py-1">
                                                     <input
@@ -463,7 +487,6 @@ Gómez,Ana,34566789,01/12/1992,3456222222,anag`}
                     )}
                 </div>
 
-                {/* Footer sticky */}
                 <div className="p-4 border-t bg-white flex flex-col-reverse sm:flex-row justify-end gap-2 sticky bottom-0">
                     <button
                         onClick={onClose}

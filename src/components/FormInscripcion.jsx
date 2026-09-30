@@ -14,6 +14,11 @@ const DIAS = Array.from({ length: 31 }, (_, i) => i + 1);
 const ANIO_ACTUAL = new Date().getFullYear();
 const ANIOS = Array.from({ length: ANIO_ACTUAL - 1920 + 1 }, (_, i) => ANIO_ACTUAL - i);
 
+const TIPOS_INTEGRANTE = [
+    { value: 'passista', label: 'Passista', emoji: '💃', desc: 'Baila en el desfile' },
+    { value: 'ritmista', label: 'Ritmista (batucada)', emoji: '🥁', desc: 'Toca en la batucada' },
+];
+
 function calcularEdad(y, m, d) {
     if (!y || !m || !d) return null;
     const today = new Date();
@@ -40,6 +45,7 @@ export default function FormInscripcion({
     const [dia, setDia] = useState('');
     const [mes, setMes] = useState('');
     const [anio, setAnio] = useState('');
+    const [tipo, setTipo] = useState(''); // 'passista' | 'ritmista'
     const [telefono, setTelefono] = useState('');
     const [instagram, setInstagram] = useState('');
 
@@ -76,6 +82,7 @@ export default function FormInscripcion({
         setDia('');
         setMes('');
         setAnio('');
+        setTipo('');
         setTelefono('');
         setInstagram('');
         setAceptaTutor(false);
@@ -95,6 +102,7 @@ export default function FormInscripcion({
         if (dniLimpio.length < 6) return setError('DNI inválido.');
         if (!dia || !mes || !anio) return setError('Completá la fecha de nacimiento.');
         if (edad === null || edad < 0 || edad > 110) return setError('Fecha de nacimiento inválida.');
+        if (!tipo) return setError('Seleccioná si es Passista o Ritmista.');
         if (!telefono.trim()) return setError('Ingresá un teléfono de contacto.');
 
         if (esMenor12) {
@@ -104,7 +112,6 @@ export default function FormInscripcion({
             }
         }
 
-        // Solo el formulario público exige el compromiso
         if (!isAdmin && !aceptaCompromiso) {
             return setError('Debés aceptar el compromiso de participar en las 4 noches.');
         }
@@ -113,7 +120,6 @@ export default function FormInscripcion({
 
         setSaving(true);
         try {
-            // Verificar DNI duplicado en la misma comparsa
             const snap = await get(ref(db, `bailarines/${comparsaId}`));
             if (snap.exists()) {
                 const data = snap.val();
@@ -130,6 +136,7 @@ export default function FormInscripcion({
                 nombreCompleto: `${apellido.trim()} ${nombre.trim()}`,
                 dni: dniLimpio,
                 fechaNacimiento,
+                tipo, // 'passista' | 'ritmista'
                 telefono: telefono.trim(),
                 instagram: instagram.trim().replace(/^@/, ''),
                 esMenor: esMenor12,
@@ -213,34 +220,19 @@ export default function FormInscripcion({
             <div>
                 <label className={labelCls}>Fecha de nacimiento</label>
                 <div className="grid grid-cols-3 gap-2">
-                    <select
-                        value={dia}
-                        onChange={(e) => setDia(e.target.value)}
-                        className={inputCls}
-                        required
-                    >
+                    <select value={dia} onChange={(e) => setDia(e.target.value)} className={inputCls} required>
                         <option value="">Día</option>
                         {DIAS.map((d) => (
                             <option key={d} value={d}>{d}</option>
                         ))}
                     </select>
-                    <select
-                        value={mes}
-                        onChange={(e) => setMes(e.target.value)}
-                        className={inputCls}
-                        required
-                    >
+                    <select value={mes} onChange={(e) => setMes(e.target.value)} className={inputCls} required>
                         <option value="">Mes</option>
                         {MESES.map((m, i) => (
                             <option key={m} value={i + 1}>{m}</option>
                         ))}
                     </select>
-                    <select
-                        value={anio}
-                        onChange={(e) => setAnio(e.target.value)}
-                        className={inputCls}
-                        required
-                    >
+                    <select value={anio} onChange={(e) => setAnio(e.target.value)} className={inputCls} required>
                         <option value="">Año</option>
                         {ANIOS.map((a) => (
                             <option key={a} value={a}>{a}</option>
@@ -251,6 +243,41 @@ export default function FormInscripcion({
                     <p className="text-xs text-gray-500 mt-1">
                         Edad: <b className="text-gray-700">{edad} años</b>
                         {esMenor12 && <span className="ml-2 text-amber-600">⚠️ Menor de 12 años</span>}
+                    </p>
+                )}
+            </div>
+
+            {/* 🆕 Tipo de integrante */}
+            <div>
+                <label className={labelCls}>Tipo de integrante</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {TIPOS_INTEGRANTE.map((t) => {
+                        const active = tipo === t.value;
+                        return (
+                            <button
+                                type="button"
+                                key={t.value}
+                                onClick={() => setTipo(t.value)}
+                                className={`text-left px-4 py-3 rounded-lg border-2 transition ${active
+                                    ? 'border-pink-500 bg-pink-50 ring-2 ring-pink-200'
+                                    : 'border-gray-300 bg-white hover:bg-gray-50'
+                                    }`}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xl">{t.emoji}</span>
+                                    <div className="min-w-0">
+                                        <p className="font-semibold text-sm text-gray-800">{t.label}</p>
+                                        <p className="text-xs text-gray-500 truncate">{t.desc}</p>
+                                    </div>
+                                    {active && <span className="ml-auto text-pink-600 text-lg">✓</span>}
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+                {!tipo && (
+                    <p className="text-xs text-gray-400 mt-1">
+                        Elegí una opción para continuar.
                     </p>
                 )}
             </div>
