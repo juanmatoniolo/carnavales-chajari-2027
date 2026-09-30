@@ -19,6 +19,14 @@ const TIPOS_INTEGRANTE = [
     { value: 'ritmista', label: 'Ritmista (batucada)', emoji: '🥁', desc: 'Toca en la batucada' },
 ];
 
+// Nombres legibles de cada comparsa (por si no viene comparsaData)
+const COMPARSA_LABEL = {
+    fenix: 'Fénix',
+    sisiri: 'Sirirí',
+    alumine: 'Aluminé',
+    amaru: 'Amarú',
+};
+
 function calcularEdad(y, m, d) {
     if (!y || !m || !d) return null;
     const today = new Date();
@@ -27,6 +35,28 @@ function calcularEdad(y, m, d) {
     const mdBirth = m * 100 + d;
     if (mdNow < mdBirth) age--;
     return age >= 0 ? age : null;
+}
+
+/**
+ * Busca un DNI en TODAS las comparsas.
+ * @returns {null | { comparsa: string, nombre: string }}
+ */
+async function buscarDniEnTodasLasComparsas(dniLimpio) {
+    const snap = await get(ref(db, 'bailarines'));
+    if (!snap.exists()) return null;
+    const data = snap.val();
+    for (const [comp, regs] of Object.entries(data)) {
+        if (!regs) continue;
+        for (const b of Object.values(regs)) {
+            if (String(b?.dni || '') === dniLimpio) {
+                return {
+                    comparsa: comp,
+                    nombre: b?.nombreCompleto || `${b?.apellido || ''} ${b?.nombre || ''}`.trim(),
+                };
+            }
+        }
+    }
+    return null;
 }
 
 export default function FormInscripcion({
@@ -45,7 +75,7 @@ export default function FormInscripcion({
     const [dia, setDia] = useState('');
     const [mes, setMes] = useState('');
     const [anio, setAnio] = useState('');
-    const [tipo, setTipo] = useState(''); // 'passista' | 'ritmista'
+    const [tipo, setTipo] = useState('');
     const [telefono, setTelefono] = useState('');
     const [instagram, setInstagram] = useState('');
 
@@ -57,6 +87,9 @@ export default function FormInscripcion({
     const [aceptaCompromiso, setAceptaCompromiso] = useState(false);
 
     const [saving, setSaving] = useState(false);
+    const [checkingDni, setCheckingDni] = useState(false);
+    const [dniStatus, setDniStatus] = useState(null); // null | 'ok' | 'dup'
+    const [dniDupInfo, setDniDupInfo] = useState(null);
     const [msg, setMsg] = useState('');
     const [error, setError] = useState('');
 
@@ -75,6 +108,38 @@ export default function FormInscripcion({
         }
     }, [esMenor12]);
 
+    // 🔎 Validación de DNI en tiempo real (debounced)
+    useEffect(() => {
+        const dniLimpio = dni.replace(/\D/g, '');
+        setDniStatus(null);
+        setDniDupInfo(null);
+        if (dniLimpio.length < 6) return;
+
+        let cancelado = false;
+        const timer = setTimeout(async () => {
+            setCheckingDni(true);
+            try {
+                const found = await buscarDniEnTodasLasComparsas(dniLimpio);
+                if (cancelado) return;
+                if (found) {
+                    setDniStatus('dup');
+                    setDniDupInfo(found);
+                } else {
+                    setDniStatus('ok');
+                }
+            } catch (err) {
+                console.error(err);
+            } finally {
+                if (!cancelado) setCheckingDni(false);
+            }
+        }, 500);
+
+        return () => {
+            cancelado = true;
+            clearTimeout(timer);
+        };
+    }, [dni]);
+
     const resetForm = () => {
         setApellido('');
         setNombre('');
@@ -90,6 +155,8 @@ export default function FormInscripcion({
         setTutorApellido('');
         setTutorTelefono('');
         setAceptaCompromiso(false);
+        setDniStatus(null);
+        setDniDupInfo(null);
     };
 
     const handleSubmit = async (e) => {
@@ -116,18 +183,31 @@ export default function FormInscripcion({
             return setError('Debés aceptar el compromiso de participar en las 4 noches.');
         }
 
+        // 🚫 Bloqueo inmediato si ya sabemos que el DNI está duplicado
+        if (dniStatus === 'dup' && dniDupInfo) {
+            const label = COMPARSA_LABEL[dniDupInfo.comparsa] || dniDupInfo.comparsa;
+            setError(
+                `El DNI ${dniLimpio} ya está registrado en la comparsa ${label}${dniDupInfo.nombre ? ` (${dniDupInfo.nombre})` : ''
+                }.`
+            );
+            return;
+        }
+
         const fechaNacimiento = `${anio}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
 
         setSaving(true);
         try {
-            const snap = await get(ref(db, `bailarines/${comparsaId}`));
-            if (snap.exists()) {
-                const data = snap.val();
-                const dup = Object.values(data).some((b) => String(b.dni) === dniLimpio);
-                if (dup) {
-                    setError(`Ya hay un inscripto con el DNI ${dniLimpio} en ${comparsaData?.nombre || comparsaId}.`);
-                    return;
-                }
+            // 🔒 Re-verificación final contra TODAS las comparsas (por si alguien se inscribió mientras tanto)
+            const found = await buscarDniEnTodasLasComparsas(dniLimpio);
+            if (found) {
+                const label = COMPARSA_LABEL[found.comparsa] || found.comparsa;
+                setError(
+                    `El DNI ${dniLimpio} ya está registrado en la comparsa ${label}${found.nombre ? ` (${found.nombre})` : ''
+                    }.`
+                );
+                setDniStatus('dup');
+                setDniDupInfo(found);
+                return;
             }
 
             const payload = {
@@ -136,7 +216,7 @@ export default function FormInscripcion({
                 nombreCompleto: `${apellido.trim()} ${nombre.trim()}`,
                 dni: dniLimpio,
                 fechaNacimiento,
-                tipo, // 'passista' | 'ritmista'
+                tipo,
                 telefono: telefono.trim(),
                 instagram: instagram.trim().replace(/^@/, ''),
                 esMenor: esMenor12,
@@ -171,6 +251,16 @@ export default function FormInscripcion({
         'w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-pink-500 outline-none text-base';
     const labelCls = 'block text-sm font-semibold text-gray-700 mb-1';
 
+    // Estilo dinámico del input de DNI
+    const dniInputCls = `w-full px-4 py-3 rounded-lg outline-none text-base border ${dniStatus === 'dup'
+        ? 'border-red-400 bg-red-50 focus:ring-2 focus:ring-red-500'
+        : dniStatus === 'ok'
+            ? 'border-green-400 bg-green-50 focus:ring-2 focus:ring-green-500'
+            : 'border-gray-300 focus:ring-2 focus:ring-pink-500'
+        }`;
+
+    const duplicado = dniStatus === 'dup';
+
     return (
         <form onSubmit={handleSubmit} className={compact ? 'space-y-4' : 'space-y-5'}>
             {/* Apellido y Nombre */}
@@ -199,21 +289,53 @@ export default function FormInscripcion({
                 </div>
             </div>
 
-            {/* DNI */}
+            {/* DNI con validación en vivo */}
             <div>
                 <label className={labelCls}>DNI</label>
-                <input
-                    type="text"
-                    inputMode="numeric"
-                    value={dni}
-                    onChange={(e) => setDni(e.target.value.replace(/\D/g, ''))}
-                    placeholder="12345678"
-                    className={inputCls}
-                    required
-                />
-                <p className="text-xs text-gray-400 mt-1">
-                    Se usa para identificar al integrante (no puede repetirse en la misma comparsa).
-                </p>
+                <div className="relative">
+                    <input
+                        type="text"
+                        inputMode="numeric"
+                        value={dni}
+                        onChange={(e) => setDni(e.target.value.replace(/\D/g, ''))}
+                        placeholder="12345678"
+                        className={dniInputCls}
+                        required
+                    />
+                    {checkingDni && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
+                            ⏳
+                        </span>
+                    )}
+                    {!checkingDni && dniStatus === 'ok' && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-green-600 text-lg">
+                            ✓
+                        </span>
+                    )}
+                    {!checkingDni && dniStatus === 'dup' && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-red-600 text-lg">
+                            ✕
+                        </span>
+                    )}
+                </div>
+
+                {/* Mensajes de estado */}
+                {dniStatus === 'dup' && dniDupInfo && (
+                    <div className="mt-2 bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2 rounded-lg">
+                        ⚠️ Este DNI ya está registrado en la comparsa{' '}
+                        <b>{COMPARSA_LABEL[dniDupInfo.comparsa] || dniDupInfo.comparsa}</b>
+                        {dniDupInfo.nombre ? ` (${dniDupInfo.nombre})` : ''}.<br />
+                        Un mismo DNI no puede anotarse en más de una comparsa.
+                    </div>
+                )}
+                {dniStatus === 'ok' && (
+                    <p className="text-xs text-green-700 mt-1">✓ DNI disponible</p>
+                )}
+                {dniStatus !== 'dup' && (
+                    <p className="text-xs text-gray-400 mt-1">
+                        Se usa para identificar al integrante. No puede repetirse en ninguna comparsa.
+                    </p>
+                )}
             </div>
 
             {/* Fecha de nacimiento */}
@@ -247,7 +369,7 @@ export default function FormInscripcion({
                 )}
             </div>
 
-            {/* 🆕 Tipo de integrante */}
+            {/* Tipo de integrante */}
             <div>
                 <label className={labelCls}>Tipo de integrante</label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -276,9 +398,7 @@ export default function FormInscripcion({
                     })}
                 </div>
                 {!tipo && (
-                    <p className="text-xs text-gray-400 mt-1">
-                        Elegí una opción para continuar.
-                    </p>
+                    <p className="text-xs text-gray-400 mt-1">Elegí una opción para continuar.</p>
                 )}
             </div>
 
@@ -406,11 +526,11 @@ export default function FormInscripcion({
                 )}
                 <button
                     type="submit"
-                    disabled={saving}
-                    className="flex-1 py-3 rounded-lg text-white font-bold shadow-lg transition disabled:opacity-60"
+                    disabled={saving || duplicado}
+                    className="flex-1 py-3 rounded-lg text-white font-bold shadow-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
                     style={{ backgroundColor: comparsaData?.color || '#ec4899' }}
                 >
-                    {saving ? 'Guardando…' : 'Inscribir'}
+                    {saving ? 'Guardando…' : duplicado ? 'DNI ya registrado' : 'Inscribir'}
                 </button>
             </div>
         </form>

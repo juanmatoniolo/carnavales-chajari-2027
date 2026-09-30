@@ -8,8 +8,14 @@ import { ref, get, push, update } from 'firebase/database';
 const YMD_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const DMY_RE = /^(0?[1-9]|[12]\d|3[01])[\/\-](0?[1-9]|1[0-2])[\/\-](\d{4})$/;
 const pad2 = (n) => String(n).padStart(2, '0');
-
 const TIPOS_VALIDOS = ['passista', 'ritmista'];
+
+const COMPARSA_LABEL = {
+    fenix: 'Fénix',
+    sisiri: 'Sirirí',
+    alumine: 'Aluminé',
+    amaru: 'Amarú',
+};
 
 function normalizeDate(raw) {
     if (raw == null) return '';
@@ -36,6 +42,31 @@ function normalizeTipo(raw) {
 
 function stamp() {
     return { epoch: Date.now(), iso: new Date().toISOString() };
+}
+
+/**
+ * Trae un mapa { dni: { comparsa, nombre } } con TODOS los DNI
+ * existentes en TODAS las comparsas de la base.
+ */
+async function obtenerTodosLosDni() {
+    const map = new Map();
+    const snap = await get(ref(db, 'bailarines'));
+    if (!snap.exists()) return map;
+    const data = snap.val();
+    for (const [comp, regs] of Object.entries(data)) {
+        if (!regs) continue;
+        for (const b of Object.values(regs)) {
+            const dni = String(b?.dni || '').trim();
+            if (!dni) continue;
+            if (!map.has(dni)) {
+                map.set(dni, {
+                    comparsa: comp,
+                    nombre: b?.nombreCompleto || `${b?.apellido || ''} ${b?.nombre || ''}`.trim(),
+                });
+            }
+        }
+    }
+    return map;
 }
 
 export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, onDone }) {
@@ -153,12 +184,57 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
         });
     };
 
-    const onPastePreview = () => {
+    // 🔎 Aplica validación de DNI a un array de filas contra un mapa existente
+    const aplicarChequeoDni = (rows, dniMap) => {
+        // Primero: duplicados dentro del propio archivo
+        const contador = new Map();
+        rows.forEach((r) => {
+            if (!r.dni) return;
+            contador.set(r.dni, (contador.get(r.dni) || 0) + 1);
+        });
+
+        return rows.map((r) => {
+            if (!r.valido) return r; // ya era inválido por otro motivo
+
+            if ((contador.get(r.dni) || 0) > 1) {
+                return {
+                    ...r,
+                    valido: false,
+                    motivo: 'DNI duplicado en el archivo',
+                };
+            }
+
+            const existing = dniMap.get(r.dni);
+            if (existing) {
+                const label = COMPARSA_LABEL[existing.comparsa] || existing.comparsa;
+                return {
+                    ...r,
+                    valido: false,
+                    motivo: `Ya registrado en ${label}`,
+                };
+            }
+
+            return r;
+        });
+    };
+
+    const onPastePreview = async () => {
         setError('');
         setMsg('');
         const rows = parsePasted(pasted);
-        setPreview(rows);
-        if (rows.length === 0) setError('No se detectaron filas.');
+        if (rows.length === 0) {
+            setPreview([]);
+            setError('No se detectaron filas.');
+            return;
+        }
+        try {
+            const dniMap = await obtenerTodosLosDni();
+            setPreview(aplicarChequeoDni(rows, dniMap));
+        } catch (err) {
+            console.error(err);
+            setPreview(rows);
+            setError('No se pudo validar los DNI contra la base.');
+        }
     };
 
     const onExcelChange = async (e) => {
@@ -192,7 +268,9 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                     idx
                 );
             });
-            setPreview(rows);
+
+            const dniMap = await obtenerTodosLosDni();
+            setPreview(aplicarChequeoDni(rows, dniMap));
             if (rows.length === 0) setError('El Excel no tiene filas.');
         } catch (err) {
             console.error(err);
@@ -210,13 +288,28 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
             else r[field] = value;
 
             const fecha = normalizeDate(r.fechaRaw);
-            const valido =
+            let valido =
                 !!(r.apellido && r.nombre && r.dni.length >= 6 && YMD_RE.test(fecha) && TIPOS_VALIDOS.includes(r.tipo));
             let motivo = '';
             if (!r.apellido || !r.nombre) motivo = 'Falta apellido/nombre';
             else if (r.dni.length < 6) motivo = 'DNI inválido';
             else if (!YMD_RE.test(fecha)) motivo = 'Fecha inválida';
             else if (!TIPOS_VALIDOS.includes(r.tipo)) motivo = 'Tipo inválido';
+
+            // Chequeo de duplicado dentro del archivo (rápido, sin Firebase)
+            if (valido && r.dni) {
+                const dup = next.some((x, i) => i !== idx && x.dni === r.dni);
+                if (dup) {
+                    valido = false;
+                    motivo = 'DNI duplicado en el archivo';
+                }
+            }
+
+            // Si había un "Ya registrado en X" previo, lo mantenemos por si el user no cambió el DNI
+            if (valido && motivo === '' && r.motivo && r.motivo.startsWith('Ya registrado')) {
+                valido = false;
+                motivo = r.motivo;
+            }
 
             next[idx] = { ...r, _fecha: fecha, valido, motivo };
             return next;
@@ -231,6 +324,10 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
 
         setSaving(true);
         try {
+            // 🔒 Chequeo final contra TODA la base
+            const dniMap = await obtenerTodosLosDni();
+
+            // Duplicados dentro del archivo
             const dnis = validas.map((v) => v.dni);
             const dupInterno = dnis.find((d, i) => dnis.indexOf(d) !== i);
             if (dupInterno) {
@@ -239,18 +336,19 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                 return;
             }
 
-            const snap = await get(ref(db, `bailarines/${comparsaId}`));
-            const existentes = new Set();
-            if (snap.exists()) {
-                Object.values(snap.val()).forEach((b) => existentes.add(String(b.dni)));
-            }
-            const yaExisten = validas.filter((v) => existentes.has(v.dni));
-            if (yaExisten.length > 0) {
-                setError(
-                    `Estos DNI ya están cargados en ${comparsaData?.nombre || comparsaId}: ${yaExisten
-                        .map((v) => v.dni)
-                        .join(', ')}`
-                );
+            // Duplicados contra la base (en cualquier comparsa)
+            const conflictos = validas.filter((v) => dniMap.has(v.dni));
+            if (conflictos.length > 0) {
+                const detalle = conflictos
+                    .map((v) => {
+                        const info = dniMap.get(v.dni);
+                        const label = COMPARSA_LABEL[info.comparsa] || info.comparsa;
+                        return `${v.dni} (en ${label})`;
+                    })
+                    .join(', ');
+                setError(`Estos DNI ya están registrados: ${detalle}`);
+                // Refrescamos el preview para marcar cuáles fallan
+                setPreview(aplicarChequeoDni(preview, dniMap));
                 setSaving(false);
                 return;
             }
@@ -286,6 +384,8 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
             setSaving(false);
         }
     };
+
+    const inputCls = 'px-3 py-2 rounded-lg border border-gray-300 text-sm';
 
     return (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 overflow-y-auto">
@@ -335,6 +435,10 @@ export default function ModalCargaMasiva({ comparsaId, comparsaData, onClose, on
                                     <code className="bg-white/70 px-1 rounded">instagram</code>.
                                     <br />
                                     <b>Fecha:</b> <b>dd/mm/aaaa</b> o <b>yyyy-mm-dd</b>.
+                                    <br />
+                                    <span className="text-red-700">
+                                        ⚠️ Los DNI ya registrados en cualquier comparsa serán rechazados automáticamente.
+                                    </span>
                                 </p>
                             </div>
 
@@ -405,7 +509,10 @@ Gómez,Ana,34566789,01/12/1992,ritmista,3456222222,anag`}
                                     </thead>
                                     <tbody>
                                         {preview.map((r, idx) => (
-                                            <tr key={r.row} className="border-t">
+                                            <tr
+                                                key={r.row}
+                                                className={`border-t ${!r.valido ? 'bg-red-50/50' : ''}`}
+                                            >
                                                 <td className="px-2 py-1">{r.row}</td>
                                                 <td className="px-2 py-1">
                                                     <input
@@ -425,7 +532,10 @@ Gómez,Ana,34566789,01/12/1992,ritmista,3456222222,anag`}
                                                     <input
                                                         value={r.dni}
                                                         onChange={(e) => updateRow(idx, 'dni', e.target.value)}
-                                                        className="w-20 px-1 py-0.5 border rounded text-xs"
+                                                        className={`w-20 px-1 py-0.5 border rounded text-xs ${r.motivo && r.motivo.includes('DNI')
+                                                            ? 'border-red-400 bg-red-50'
+                                                            : ''
+                                                            }`}
                                                     />
                                                 </td>
                                                 <td className="px-2 py-1">
@@ -464,7 +574,9 @@ Gómez,Ana,34566789,01/12/1992,ritmista,3456222222,anag`}
                                                     {r.valido ? (
                                                         <span className="text-green-700 font-semibold">OK</span>
                                                     ) : (
-                                                        <span className="text-red-600" title={r.motivo}>✕</span>
+                                                        <span className="text-red-600" title={r.motivo}>
+                                                            ✕ {r.motivo}
+                                                        </span>
                                                     )}
                                                 </td>
                                             </tr>

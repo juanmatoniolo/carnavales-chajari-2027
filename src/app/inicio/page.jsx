@@ -3,19 +3,30 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
+import { FaWhatsapp } from 'react-icons/fa';
 import ProtectedRoute from '../../components/ProtectedRoute';
+import Header from '../../components/Header';
 import FormInscripcion from '../../components/FormInscripcion';
 import ModalCargaMasiva from '../../components/ModalCargaMasiva';
+import ConfirmModal from '../../components/ConfirmModal';
 import { db } from '../../firebase/firebase';
 import { ref, get, remove, update } from 'firebase/database';
 import { COMPARSAS } from '../../lib/comparsas';
 import { calcEdad, formatYMD, formatEpoch } from '../../lib/dates';
 
-// 🆕 Helper para mostrar el tipo
-export function labelTipo(tipo) {
+function labelTipo(tipo) {
     if (tipo === 'passista') return { emoji: '💃', label: 'Passista', color: '#ec4899' };
     if (tipo === 'ritmista') return { emoji: '🥁', label: 'Ritmista', color: '#f59e0b' };
     return { emoji: '—', label: 'Sin tipo', color: '#9ca3af' };
+}
+
+function whatsappUrl(tel) {
+    if (!tel) return null;
+    let n = String(tel).replace(/\D/g, '');
+    if (!n) return null;
+    if (n.startsWith('0')) n = n.slice(1);
+    if (!n.startsWith('54')) n = '549' + n;
+    return `https://wa.me/${n}`;
 }
 
 export default function InicioPage() {
@@ -28,7 +39,7 @@ export default function InicioPage() {
     const [q, setQ] = useState('');
     const [fEdadMin, setFEdadMin] = useState('');
     const [fEdadMax, setFEdadMax] = useState('');
-    const [fTipo, setFTipo] = useState('todos'); // 🆕
+    const [fTipo, setFTipo] = useState('todos');
 
     const [showAdd, setShowAdd] = useState(false);
     const [showBulk, setShowBulk] = useState(false);
@@ -36,6 +47,14 @@ export default function InicioPage() {
     const [saving, setSaving] = useState(false);
     const [editError, setEditError] = useState('');
     const [shareMsg, setShareMsg] = useState('');
+
+    const [toDelete, setToDelete] = useState(null);
+    const [deleting, setDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState('');
+
+    const [selected, setSelected] = useState(new Set());
+    const [showBulkDelete, setShowBulkDelete] = useState(false);
+    const [bulkDeleting, setBulkDeleting] = useState(false);
 
     useEffect(() => {
         setUsuario(localStorage.getItem('usuario') || '');
@@ -60,7 +79,7 @@ export default function InicioPage() {
                                 b.nombreCompleto || `${b.apellido || ''} ${b.nombre || ''}`.trim(),
                             dni: b.dni || '',
                             fechaNacimiento: b.fechaNacimiento || '',
-                            tipo: b.tipo || '', // 🆕
+                            tipo: b.tipo || '',
                             telefono: b.telefono || '',
                             instagram: b.instagram || '',
                             esMenor: b.esMenor || false,
@@ -86,6 +105,10 @@ export default function InicioPage() {
         if (comparsa && comparsa !== 'root') load();
     }, [comparsa]);
 
+    useEffect(() => {
+        setSelected(new Set());
+    }, [tab]);
+
     const c = COMPARSAS[comparsa] || null;
 
     const sourceList = useMemo(() => {
@@ -105,7 +128,7 @@ export default function InicioPage() {
                 if (term && !full.includes(term) && !b.dni.includes(term)) return false;
                 if (min !== null && (b.edad === null || b.edad < min)) return false;
                 if (max !== null && (b.edad === null || b.edad > max)) return false;
-                if (fTipo !== 'todos' && b.tipo !== fTipo) return false; // 🆕
+                if (fTipo !== 'todos' && b.tipo !== fTipo) return false;
                 return true;
             })
             .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -123,18 +146,87 @@ export default function InicioPage() {
     }, [sourceList]);
 
     const canEdit = (b) => b.comparsa === comparsa;
+    const rowKey = (b) => `${b.comparsa}-${b.id}`;
 
-    const handleDelete = async (b) => {
+    const toggleSelect = (b) => {
         if (!canEdit(b)) return;
-        if (!confirm(`¿Eliminar a ${b.nombreCompleto} (DNI ${b.dni})?`)) return;
+        const k = rowKey(b);
+        setSelected((prev) => {
+            const next = new Set(prev);
+            if (next.has(k)) next.delete(k);
+            else next.add(k);
+            return next;
+        });
+    };
+
+    const allVisibleSelected =
+        filtrados.length > 0 && filtrados.every((b) => selected.has(rowKey(b)));
+
+    const toggleAllVisible = () => {
+        if (tab !== 'comparsa') return;
+        setSelected((prev) => {
+            const next = new Set(prev);
+            if (allVisibleSelected) {
+                filtrados.forEach((b) => next.delete(rowKey(b)));
+            } else {
+                filtrados.forEach((b) => {
+                    if (canEdit(b)) next.add(rowKey(b));
+                });
+            }
+            return next;
+        });
+    };
+
+    const clearSelection = () => setSelected(new Set());
+
+    const handleDelete = (b) => {
+        if (!canEdit(b)) return;
+        setDeleteError('');
+        setToDelete(b);
+    };
+
+    const confirmDelete = async () => {
+        if (!toDelete) return;
+        setDeleting(true);
+        setDeleteError('');
         try {
-            await remove(ref(db, `bailarines/${b.comparsa}/${b.id}`));
+            await remove(ref(db, `bailarines/${toDelete.comparsa}/${toDelete.id}`));
             setAllBailarines((prev) =>
-                prev.filter((x) => !(x.id === b.id && x.comparsa === b.comparsa))
+                prev.filter((x) => !(x.id === toDelete.id && x.comparsa === toDelete.comparsa))
             );
+            setSelected((prev) => {
+                const next = new Set(prev);
+                next.delete(`${toDelete.comparsa}-${toDelete.id}`);
+                return next;
+            });
+            setToDelete(null);
         } catch (err) {
             console.error(err);
-            alert('Error al eliminar.');
+            setDeleteError('No se pudo eliminar. Revisá la conexión.');
+        } finally {
+            setDeleting(false);
+        }
+    };
+
+    const confirmBulkDelete = async () => {
+        setBulkDeleting(true);
+        setDeleteError('');
+        try {
+            const updates = {};
+            allBailarines.forEach((b) => {
+                if (selected.has(rowKey(b))) {
+                    updates[`bailarines/${b.comparsa}/${b.id}`] = null;
+                }
+            });
+            await update(ref(db), updates);
+            setAllBailarines((prev) => prev.filter((b) => !selected.has(rowKey(b))));
+            setSelected(new Set());
+            setShowBulkDelete(false);
+        } catch (err) {
+            console.error(err);
+            setDeleteError('No se pudieron eliminar. Revisá la conexión.');
+        } finally {
+            setBulkDeleting(false);
         }
     };
 
@@ -148,7 +240,7 @@ export default function InicioPage() {
             nombre: b.nombre,
             dni: b.dni,
             fechaNacimiento: b.fechaNacimiento,
-            tipo: b.tipo || '', // 🆕
+            tipo: b.tipo || '',
             telefono: b.telefono,
             instagram: b.instagram,
         });
@@ -211,30 +303,46 @@ export default function InicioPage() {
         }
     };
 
+    // ============ EXPORT (condicional por tab) ============
     const exportExcel = async () => {
         const XLSX = await import('xlsx');
-        const rows = filtrados.map((b) => ({
-            Comparsa: COMPARSAS[b.comparsa]?.nombre || b.comparsa,
-            Club: COMPARSAS[b.comparsa]?.club || '',
-            Apellido: b.apellido,
-            Nombre: b.nombre,
-            DNI: b.dni,
-            'Fecha Nac.': formatYMD(b.fechaNacimiento),
-            Edad: b.edad ?? '',
-            Tipo: labelTipo(b.tipo).label,
-            Teléfono: b.telefono,
-            Instagram: b.instagram ? `@${b.instagram}` : '',
-            Menor: b.esMenor ? 'Sí' : 'No',
-            'Tutor (si menor)': b.tutor
-                ? `${b.tutor.apellido} ${b.tutor.nombre} - ${b.tutor.telefono}`
-                : '',
-            Cargado: formatEpoch(b.createdAt),
-            Modificado: b.updatedAt ? formatEpoch(b.updatedAt) : '',
-        }));
+        const esTabComparsa = tab === 'comparsa';
+
+        const rows = filtrados.map((b) => {
+            const base = {
+                Nombre: b.nombreCompleto,
+                DNI: b.dni,
+                'Fecha Nac.': formatYMD(b.fechaNacimiento),
+                Edad: b.edad ?? '',
+                Tipo: labelTipo(b.tipo).label,
+            };
+
+            if (esTabComparsa) {
+                return {
+                    ...base,
+                    Teléfono: b.telefono,
+                    Instagram: b.instagram ? `@${b.instagram}` : '',
+                    Menor: b.esMenor ? 'Sí' : 'No',
+                    'Tutor (si menor)': b.tutor
+                        ? `${b.tutor.apellido} ${b.tutor.nombre} - ${b.tutor.telefono}`
+                        : '',
+                };
+            } else {
+                // General: sin teléfono
+                return {
+                    Comparsa: COMPARSAS[b.comparsa]?.nombre || b.comparsa,
+                    Club: COMPARSAS[b.comparsa]?.club || '',
+                    ...base,
+                    Creado: formatEpoch(b.createdAt),
+                    Modificado: b.updatedAt ? formatEpoch(b.updatedAt) : '',
+                };
+            }
+        });
+
         const ws = XLSX.utils.json_to_sheet(rows);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Bailarines');
-        const sufijo = tab === 'comparsa' ? comparsa : 'general';
+        const sufijo = esTabComparsa ? comparsa : 'general';
         XLSX.writeFile(wb, `bailarines_${sufijo}_${new Date().toISOString().slice(0, 10)}.xlsx`);
     };
 
@@ -262,11 +370,6 @@ export default function InicioPage() {
         }
     };
 
-    const handleLogout = () => {
-        localStorage.clear();
-        window.location.href = '/';
-    };
-
     const limpiarFiltros = () => {
         setQ('');
         setFEdadMin('');
@@ -274,32 +377,21 @@ export default function InicioPage() {
         setFTipo('todos');
     };
 
+    const hasSelection = selected.size > 0;
+    const esTabComparsa = tab === 'comparsa';
+
     return (
         <ProtectedRoute requireTipo="usuario">
-            <main className="min-h-screen bg-gray-50 pb-24">
-                <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-                    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3 min-w-0">
-                            {c && (
-                                <Image src={c.logo} alt={c.nombre} width={40} height={40} className="rounded-full bg-white shrink-0" />
-                            )}
-                            <div className="min-w-0">
-                                <h1 className="font-bold text-gray-800 truncate" style={{ color: c?.color }}>
-                                    {c?.nombre || comparsa}
-                                </h1>
-                                <p className="text-xs text-gray-500 truncate">
-                                    {usuario} · {c?.club || ''}
-                                </p>
-                            </div>
-                        </div>
-                        <button
-                            onClick={handleLogout}
-                            className="px-3 py-2 rounded-lg bg-red-500 text-white text-sm font-semibold hover:bg-red-600 shrink-0"
-                        >
-                            Salir
-                        </button>
-                    </div>
+            <main className={`min-h-screen bg-gray-50 ${hasSelection ? 'pb-32' : 'pb-24'}`}>
+                <Header
+                    titulo={c?.nombre || comparsa}
+                    subtitulo={`${usuario} · ${c?.club || ''}`}
+                    logo={c?.logo}
+                    color={c?.color}
+                />
 
+                {/* Tabs */}
+                <div className="bg-white border-b border-gray-200 sticky top-[65px] z-20">
                     <div className="max-w-6xl mx-auto px-4 sm:px-6">
                         <div className="flex gap-1 -mb-px overflow-x-auto">
                             <button
@@ -328,16 +420,15 @@ export default function InicioPage() {
                             </button>
                         </div>
                     </div>
-                </header>
+                </div>
 
                 <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-5 space-y-5">
-                    {/* Stats */}
                     <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         <div className="bg-white rounded-xl shadow-sm p-3 sm:p-4">
                             <p className="text-xs text-gray-500 truncate">Total</p>
                             <p
                                 className="text-2xl sm:text-3xl font-bold"
-                                style={{ color: tab === 'comparsa' ? c?.color : '#374151' }}
+                                style={{ color: esTabComparsa ? c?.color : '#374151' }}
                             >
                                 {stats.total}
                             </p>
@@ -362,7 +453,7 @@ export default function InicioPage() {
                         </div>
                     </section>
 
-                    {tab === 'comparsa' && (
+                    {esTabComparsa && (
                         <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <button
                                 onClick={() => setShowAdd(true)}
@@ -391,7 +482,6 @@ export default function InicioPage() {
                         </div>
                     )}
 
-                    {/* Filtros */}
                     <section className="bg-white rounded-xl shadow-sm p-4">
                         <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                             <input
@@ -450,13 +540,12 @@ export default function InicioPage() {
                         </div>
                     </section>
 
-                    {/* Tabla */}
                     <section className="bg-white rounded-xl shadow-sm overflow-hidden">
                         {loading ? (
                             <p className="p-6 text-gray-500">Cargando…</p>
                         ) : filtrados.length === 0 ? (
                             <p className="p-6 text-gray-500">
-                                {tab === 'comparsa'
+                                {esTabComparsa
                                     ? 'No hay integrantes cargados en tu comparsa.'
                                     : 'No hay resultados.'}
                             </p>
@@ -465,17 +554,45 @@ export default function InicioPage() {
                                 <table className="w-full text-sm">
                                     <thead className="bg-gray-800 text-white">
                                         <tr>
-                                            {tab === 'general' && (
-                                                <th className="text-left px-3 py-2">Comparsa</th>
+                                            {/* Checkbox — solo comparsa */}
+                                            {esTabComparsa && (
+                                                <th className="w-10 px-3 py-2">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={allVisibleSelected}
+                                                        onChange={toggleAllVisible}
+                                                        className="w-4 h-4 accent-pink-500 cursor-pointer"
+                                                        title="Seleccionar todo"
+                                                    />
+                                                </th>
                                             )}
-                                            <th className="text-left px-3 py-2">Nombre</th>
-                                            <th className="text-left px-3 py-2">DNI</th>
-                                            <th className="text-left px-3 py-2">Nacimiento</th>
-                                            <th className="text-left px-3 py-2">Edad</th>
-                                            <th className="text-left px-3 py-2">Tipo</th>
-                                            <th className="text-left px-3 py-2">Tel.</th>
-                                            <th className="text-left px-3 py-2">Modificado</th>
-                                            {tab === 'comparsa' && <th className="px-3 py-2"></th>}
+
+                                            {/* 🌐 GENERAL */}
+                                            {!esTabComparsa && (
+                                                <>
+                                                    <th className="text-left px-3 py-2">Comparsa</th>
+                                                    <th className="text-left px-3 py-2">Nombre</th>
+                                                    <th className="text-left px-3 py-2">DNI</th>
+                                                    <th className="text-left px-3 py-2">Nacimiento</th>
+                                                    <th className="text-left px-3 py-2">Edad</th>
+                                                    <th className="text-left px-3 py-2">Tipo</th>
+                                                    <th className="text-left px-3 py-2">Creado</th>
+                                                    <th className="text-left px-3 py-2">Modificado</th>
+                                                </>
+                                            )}
+
+                                            {/* 🎭 COMPARSA */}
+                                            {esTabComparsa && (
+                                                <>
+                                                    <th className="text-left px-3 py-2">Nombre</th>
+                                                    <th className="text-left px-3 py-2">DNI</th>
+                                                    <th className="text-left px-3 py-2">Nacimiento</th>
+                                                    <th className="text-left px-3 py-2">Edad</th>
+                                                    <th className="text-left px-3 py-2">Tipo</th>
+                                                    <th className="text-left px-3 py-2">Teléfono</th>
+                                                    <th className="px-3 py-2"></th>
+                                                </>
+                                            )}
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -483,84 +600,156 @@ export default function InicioPage() {
                                             const bc = COMPARSAS[b.comparsa];
                                             const editable = canEdit(b);
                                             const t = labelTipo(b.tipo);
+                                            const k = rowKey(b);
+                                            const isSelected = selected.has(k);
+                                            const wa = whatsappUrl(b.telefono);
                                             return (
                                                 <tr
-                                                    key={`${b.comparsa}-${b.id}`}
-                                                    className={`border-b border-gray-100 ${editable ? 'hover:bg-gray-50' : 'bg-gray-50/50'
+                                                    key={k}
+                                                    className={`border-b border-gray-100 ${isSelected
+                                                        ? 'bg-pink-50'
+                                                        : editable
+                                                            ? 'hover:bg-gray-50'
+                                                            : 'bg-gray-50/50'
                                                         }`}
                                                 >
-                                                    {tab === 'general' && (
-                                                        <td
-                                                            className="px-3 py-2 whitespace-nowrap"
-                                                            style={{ color: bc?.color, fontWeight: 600 }}
-                                                        >
-                                                            <div className="flex items-center gap-2">
-                                                                {bc && (
-                                                                    <Image
-                                                                        src={bc.logo}
-                                                                        alt={bc.nombre}
-                                                                        width={20}
-                                                                        height={20}
-                                                                        className="rounded-full"
-                                                                    />
-                                                                )}
-                                                                <span className="text-xs sm:text-sm">
-                                                                    {bc?.nombre || b.comparsa}
-                                                                </span>
-                                                            </div>
+                                                    {esTabComparsa && (
+                                                        <td className="px-3 py-2">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={isSelected}
+                                                                onChange={() => toggleSelect(b)}
+                                                                className="w-4 h-4 accent-pink-500 cursor-pointer"
+                                                            />
                                                         </td>
                                                     )}
-                                                    <td className="px-3 py-2">
-                                                        <div className="flex items-center gap-1">
-                                                            {b.esMenor && (
-                                                                <span title="Menor" className="text-amber-500">👶</span>
-                                                            )}
-                                                            {b.nombreCompleto}
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-3 py-2 whitespace-nowrap">{b.dni}</td>
-                                                    <td className="px-3 py-2 whitespace-nowrap">
-                                                        {formatYMD(b.fechaNacimiento)}
-                                                    </td>
-                                                    <td className="px-3 py-2 whitespace-nowrap">{b.edad ?? '-'}</td>
-                                                    <td className="px-3 py-2 whitespace-nowrap">
-                                                        <span
-                                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
-                                                            style={{
-                                                                backgroundColor: `${t.color}15`,
-                                                                color: t.color,
-                                                            }}
-                                                        >
-                                                            {t.emoji} {t.label}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-3 py-2 whitespace-nowrap text-xs">
-                                                        {b.telefono || '-'}
-                                                    </td>
-                                                    <td className="px-3 py-2 whitespace-nowrap text-xs">
-                                                        {b.updatedAt ? (
-                                                            <span className="text-amber-600">
-                                                                ✏️ {formatEpoch(b.updatedAt)}
-                                                            </span>
-                                                        ) : (
-                                                            <span className="text-gray-400">—</span>
-                                                        )}
-                                                    </td>
-                                                    {tab === 'comparsa' && (
-                                                        <td className="px-3 py-2 whitespace-nowrap text-right space-x-2">
-                                                            <button
-                                                                onClick={() => openEdit(b)}
-                                                                className="text-blue-600 hover:text-blue-800 font-semibold text-xs"
+
+                                                    {/* 🌐 GENERAL */}
+                                                    {!esTabComparsa && (
+                                                        <>
+                                                            <td
+                                                                className="px-3 py-2 whitespace-nowrap"
+                                                                style={{ color: bc?.color, fontWeight: 600 }}
                                                             >
-                                                                Editar
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleDelete(b)}
-                                                                className="text-red-600 hover:text-red-800 font-semibold text-xs"
-                                                            >
-                                                                Eliminar
-                                                            </button>
-                                                        </td>
+                                                                <div className="flex items-center gap-2">
+                                                                    {bc && (
+                                                                        <Image
+                                                                            src={bc.logo}
+                                                                            alt={bc.nombre}
+                                                                            width={20}
+                                                                            height={20}
+                                                                            className="rounded-full"
+                                                                        />
+                                                                    )}
+                                                                    <span className="text-xs sm:text-sm">
+                                                                        {bc?.nombre || b.comparsa}
+                                                                    </span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-3 py-2 whitespace-nowrap">
+                                                                <div className="flex items-center gap-1">
+                                                                    {b.esMenor && (
+                                                                        <span title="Menor" className="text-amber-500">👶</span>
+                                                                    )}
+                                                                    {b.nombreCompleto}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-3 py-2 whitespace-nowrap">{b.dni}</td>
+                                                            <td className="px-3 py-2 whitespace-nowrap">
+                                                                {formatYMD(b.fechaNacimiento)}
+                                                            </td>
+                                                            <td className="px-3 py-2 whitespace-nowrap">{b.edad ?? '-'}</td>
+                                                            <td className="px-3 py-2 whitespace-nowrap">
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
+                                                                    style={{
+                                                                        backgroundColor: `${t.color}15`,
+                                                                        color: t.color,
+                                                                    }}
+                                                                >
+                                                                    {t.emoji} {t.label}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-600">
+                                                                {formatEpoch(b.createdAt)}
+                                                            </td>
+                                                            <td className="px-3 py-2 whitespace-nowrap text-xs">
+                                                                {b.updatedAt ? (
+                                                                    <span className="text-amber-600">
+                                                                        ✏️ {formatEpoch(b.updatedAt)}
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="text-gray-400">—</span>
+                                                                )}
+                                                            </td>
+                                                        </>
+                                                    )}
+
+                                                    {/* 🎭 COMPARSA */}
+                                                    {esTabComparsa && (
+                                                        <>
+                                                            <td className="px-3 py-2">
+                                                                <div className="flex items-center gap-1">
+                                                                    {b.esMenor && (
+                                                                        <span title="Menor" className="text-amber-500">👶</span>
+                                                                    )}
+                                                                    {b.nombreCompleto}
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-3 py-2 whitespace-nowrap">{b.dni}</td>
+                                                            <td className="px-3 py-2 whitespace-nowrap">
+                                                                {formatYMD(b.fechaNacimiento)}
+                                                            </td>
+                                                            <td className="px-3 py-2 whitespace-nowrap">{b.edad ?? '-'}</td>
+                                                            <td className="px-3 py-2 whitespace-nowrap">
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
+                                                                    style={{
+                                                                        backgroundColor: `${t.color}15`,
+                                                                        color: t.color,
+                                                                    }}
+                                                                >
+                                                                    {t.emoji} {t.label}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-3 py-2 whitespace-nowrap text-xs">
+                                                                {b.telefono ? (
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="font-medium text-gray-700">
+                                                                            {b.telefono}
+                                                                        </span>
+                                                                        {wa && (
+                                                                            <a
+                                                                                href={wa}
+                                                                                target="_blank"
+                                                                                rel="noopener noreferrer"
+                                                                                className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-green-500 hover:bg-green-600 text-white shadow-sm transition active:scale-95"
+                                                                                title={`Enviar WhatsApp a ${b.telefono}`}
+                                                                                aria-label="WhatsApp"
+                                                                            >
+                                                                                <FaWhatsapp size={16} />
+                                                                            </a>
+                                                                        )}
+                                                                    </div>
+                                                                ) : (
+                                                                    <span className="text-gray-400">—</span>
+                                                                )}
+                                                            </td>
+                                                            <td className="px-3 py-2 whitespace-nowrap text-right space-x-2">
+                                                                <button
+                                                                    onClick={() => openEdit(b)}
+                                                                    className="text-blue-600 hover:text-blue-800 font-semibold text-xs"
+                                                                >
+                                                                    Editar
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleDelete(b)}
+                                                                    className="text-red-600 hover:text-red-800 font-semibold text-xs"
+                                                                >
+                                                                    Eliminar
+                                                                </button>
+                                                            </td>
+                                                        </>
                                                     )}
                                                 </tr>
                                             );
@@ -572,7 +761,7 @@ export default function InicioPage() {
                     </section>
                 </div>
 
-                {tab === 'comparsa' && (
+                {esTabComparsa && !hasSelection && (
                     <button
                         onClick={compartirLink}
                         className="fixed bottom-6 right-6 z-20 flex items-center justify-center w-14 h-14 rounded-full bg-pink-600 hover:bg-pink-700 text-white shadow-2xl active:scale-95 transition"
@@ -580,6 +769,39 @@ export default function InicioPage() {
                     >
                         <span className="text-2xl leading-none">🔗</span>
                     </button>
+                )}
+
+                {hasSelection && (
+                    <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 shadow-2xl">
+                        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 min-w-0">
+                                <div className="w-9 h-9 rounded-full bg-pink-100 text-pink-700 flex items-center justify-center font-bold text-sm shrink-0">
+                                    {selected.size}
+                                </div>
+                                <span className="text-sm font-semibold text-gray-700 truncate">
+                                    {selected.size === 1
+                                        ? '1 seleccionado'
+                                        : `${selected.size} seleccionados`}
+                                </span>
+                            </div>
+                            <div className="flex gap-2 shrink-0">
+                                <button
+                                    onClick={clearSelection}
+                                    disabled={bulkDeleting}
+                                    className="px-3 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-100 disabled:opacity-50"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={() => setShowBulkDelete(true)}
+                                    disabled={bulkDeleting}
+                                    className="px-4 py-2 text-sm rounded-lg bg-red-500 hover:bg-red-600 text-white font-bold disabled:opacity-50 flex items-center gap-1.5"
+                                >
+                                    🗑️ Eliminar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 )}
 
                 {showAdd && (
@@ -682,7 +904,6 @@ export default function InicioPage() {
                                     />
                                 </div>
 
-                                {/* 🆕 Tipo */}
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-600 mb-1">
                                         Tipo de integrante
@@ -760,6 +981,78 @@ export default function InicioPage() {
                         </div>
                     </div>
                 )}
+
+                <ConfirmModal
+                    open={!!toDelete}
+                    title="Eliminar integrante"
+                    message={
+                        toDelete ? (
+                            <div className="text-center">
+                                <p className="text-gray-600">
+                                    ¿Seguro que querés eliminar a{' '}
+                                    <b className="text-gray-800">{toDelete.nombreCompleto}</b>?
+                                </p>
+                                <p className="mt-2 text-xs text-gray-500">
+                                    DNI <b>{toDelete.dni}</b> · {labelTipo(toDelete.tipo).label}
+                                </p>
+                                <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg py-2 px-3">
+                                    ⚠️ Esta acción no se puede deshacer.
+                                </p>
+                                {deleteError && (
+                                    <p className="mt-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg py-2 px-3">
+                                        {deleteError}
+                                    </p>
+                                )}
+                            </div>
+                        ) : null
+                    }
+                    confirmText="Eliminar"
+                    cancelText="Cancelar"
+                    variant="danger"
+                    color={c?.color}
+                    loading={deleting}
+                    onConfirm={confirmDelete}
+                    onCancel={() => {
+                        if (deleting) return;
+                        setToDelete(null);
+                        setDeleteError('');
+                    }}
+                />
+
+                <ConfirmModal
+                    open={showBulkDelete}
+                    title="Eliminar seleccionados"
+                    message={
+                        <div className="text-center">
+                            <p className="text-gray-600">
+                                ¿Seguro que querés eliminar{' '}
+                                <b className="text-gray-800">
+                                    {selected.size} integrante{selected.size !== 1 ? 's' : ''}
+                                </b>
+                                ?
+                            </p>
+                            <p className="mt-3 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg py-2 px-3">
+                                ⚠️ Esta acción no se puede deshacer.
+                            </p>
+                            {deleteError && (
+                                <p className="mt-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg py-2 px-3">
+                                    {deleteError}
+                                </p>
+                            )}
+                        </div>
+                    }
+                    confirmText={`Eliminar ${selected.size}`}
+                    cancelText="Cancelar"
+                    variant="danger"
+                    color={c?.color}
+                    loading={bulkDeleting}
+                    onConfirm={confirmBulkDelete}
+                    onCancel={() => {
+                        if (bulkDeleting) return;
+                        setShowBulkDelete(false);
+                        setDeleteError('');
+                    }}
+                />
             </main>
         </ProtectedRoute>
     );
