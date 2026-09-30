@@ -7,12 +7,10 @@ import Link from 'next/link';
 import ChangePasswordModal from './ChangePasswordModal';
 
 export default function Header({
-    // Opcionales para mostrar en el centro/izquierda
     titulo = null,
     subtitulo = null,
     logo = null,
     color = null,
-    // Callback extra opcional si querés manejar logout aparte
     onLogout = null,
 }) {
     const [usuario, setUsuario] = useState('');
@@ -26,7 +24,6 @@ export default function Header({
         setTipo(localStorage.getItem('tipo') || '');
     }, []);
 
-    // Cerrar el dropdown al hacer click afuera
     useEffect(() => {
         if (!menuOpen) return;
         const onDocClick = (e) => {
@@ -59,38 +56,23 @@ export default function Header({
         <>
             <header className="bg-white border-b border-gray-200 sticky top-0 z-30">
                 <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
-                    {/* Izquierda: logo + título */}
-                    <Link href={homeHref} className="flex items-center gap-3 min-w-0">
-                        {logo && (
-                            <Image
-                                src={logo}
-                                alt={titulo || 'Logo'}
-                                width={40}
-                                height={40}
-                                className="rounded-full bg-white shrink-0"
-                            />
-                        )}
-                        {!logo && (
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center text-white font-bold shrink-0">
-                                🎭
-                            </div>
-                        )}
+                    {/* Izquierda: título */}
+                    <Link href={homeHref} className="flex items-center min-w-0">
                         <div className="min-w-0">
-                            {titulo && (
+                            {titulo ? (
                                 <h1
-                                    className="font-bold text-gray-800 truncate text-sm sm:text-base"
-                                    style={color ? { color } : undefined}
+                                    className="text-2xl sm:text-3xl font-bold truncate leading-tight"
+                                    style={{
+                                        color: color || '#111827',
+                                        fontFamily: 'var(--font-greatvibes), cursive',
+                                    }}
                                 >
                                     {titulo}
                                 </h1>
-                            )}
-                            {subtitulo && (
-                                <p className="text-xs text-gray-500 truncate">{subtitulo}</p>
-                            )}
-                            {!titulo && !subtitulo && (
-                                <p className="font-bold text-gray-800 text-sm sm:text-base">
+                            ) : (
+                                <h1 className="text-xl sm:text-2xl font-bold text-gray-800 truncate">
                                     Carnavales Chajarí
-                                </p>
+                                </h1>
                             )}
                         </div>
                     </Link>
@@ -99,16 +81,30 @@ export default function Header({
                     <div className="relative shrink-0" ref={menuRef}>
                         <button
                             onClick={() => setMenuOpen((s) => !s)}
-                            className="flex items-center gap-2 px-2 py-1.5 rounded-full hover:bg-gray-100 transition active:scale-95"
+                            className="flex items-center gap-2 px-1.5 py-1.5 rounded-full hover:bg-gray-100 transition active:scale-95"
                             aria-label="Menú de usuario"
                             aria-expanded={menuOpen}
                         >
-                            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm shadow-sm">
-                                {initial}
-                            </div>
-                            <span className="hidden sm:inline text-sm font-semibold text-gray-700 max-w-[100px] truncate">
+                            {logo ? (
+                                <div className="w-10 h-10 rounded-full bg-white border-2 border-gray-100 shadow-sm flex items-center justify-center overflow-hidden">
+                                    <Image
+                                        src={logo}
+                                        alt="Perfil"
+                                        width={40}
+                                        height={40}
+                                        className="w-full h-full object-contain rounded-full"
+                                    />
+                                </div>
+                            ) : (
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm shadow-sm">
+                                    {initial}
+                                </div>
+                            )}
+
+                            <span className="hidden sm:inline text-sm font-semibold text-gray-700 max-w-[120px] truncate">
                                 {usuario}
                             </span>
+
                             <svg
                                 className={`w-4 h-4 text-gray-500 transition-transform ${menuOpen ? 'rotate-180' : ''}`}
                                 fill="none"
@@ -121,14 +117,29 @@ export default function Header({
 
                         {/* Dropdown */}
                         {menuOpen && (
-                            <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden animate-dropdown z-50">
+                            <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden animate-dropdown z-50">
                                 {/* Info usuario */}
-                                <div className="px-4 py-3 bg-gradient-to-r from-pink-50 to-purple-50 border-b border-gray-100">
-                                    <p className="text-xs text-gray-500">Sesión activa</p>
-                                    <p className="font-bold text-gray-800 text-sm truncate">{usuario}</p>
-                                    <span className="inline-block mt-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-pink-100 text-pink-700">
-                                        {tipo === 'root' ? '👑 Admin' : '🎭 Comparsa'}
-                                    </span>
+                                <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+                                    <div className="flex items-center gap-3">
+                                        {logo ? (
+                                            <div className="w-12 h-12 rounded-full bg-white border border-gray-200 flex items-center justify-center overflow-hidden shrink-0">
+                                                <Image
+                                                    src={logo}
+                                                    alt="Perfil"
+                                                    width={48}
+                                                    height={48}
+                                                    className="w-full h-full object-contain"
+                                                />
+                                            </div>
+                                        ) : (
+                                            <div className="w-12 h-12 rounded-full bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center text-white font-bold text-base shrink-0">
+                                                {initial}
+                                            </div>
+                                        )}
+                                        <div className="min-w-0 flex-1">
+                                            <p className="font-bold text-gray-800 text-base truncate">{usuario}</p>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 {/* Opciones */}
@@ -137,12 +148,12 @@ export default function Header({
                                         setMenuOpen(false);
                                         setShowChangePass(true);
                                     }}
-                                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-50 transition"
+                                    className="w-full flex items-center gap-4 px-5 py-4 text-left text-sm text-gray-700 hover:bg-gray-50 transition"
                                 >
-                                    <span className="text-lg">🔐</span>
-                                    <div>
-                                        <p className="font-semibold">Cambiar contraseña</p>
-                                        <p className="text-xs text-gray-400">Actualizá tu clave de acceso</p>
+                                    <span className="text-xl shrink-0">🔐</span>
+                                    <div className="min-w-0">
+                                        <p className="font-semibold text-[15px]">Cambiar contraseña</p>
+                                        <p className="text-xs text-gray-500">Actualizá tu clave de acceso</p>
                                     </div>
                                 </button>
 
@@ -150,11 +161,11 @@ export default function Header({
 
                                 <button
                                     onClick={handleLogout}
-                                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50 transition"
+                                    className="w-full flex items-center gap-4 px-5 py-4 text-left text-sm text-red-600 hover:bg-red-50 transition"
                                 >
-                                    <span className="text-lg">🚪</span>
-                                    <div>
-                                        <p className="font-semibold">Cerrar sesión</p>
+                                    <span className="text-xl shrink-0">🚪</span>
+                                    <div className="min-w-0">
+                                        <p className="font-semibold text-[15px]">Cerrar sesión</p>
                                         <p className="text-xs text-red-400">Salir de la cuenta</p>
                                     </div>
                                 </button>
@@ -164,7 +175,6 @@ export default function Header({
                 </div>
             </header>
 
-            {/* Modal cambiar contraseña */}
             <ChangePasswordModal
                 open={showChangePass}
                 usuario={usuario}

@@ -234,7 +234,11 @@ export default function PanelRootPage() {
     return (
         <ProtectedRoute requireTipo="root">
             <main className={`min-h-screen bg-gray-50 ${hasSelection ? 'pb-28' : 'pb-10'}`}>
-                <Header titulo="Panel Root" subtitulo="Administración general" />
+                <Header
+                    titulo="Panel Root"
+                    subtitulo="Administración general"
+                    logo="/logo.png"
+                />
 
                 {/* Tabs */}
                 <div className="bg-white border-b border-gray-200 sticky top-[65px] z-20">
