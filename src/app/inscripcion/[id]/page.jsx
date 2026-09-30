@@ -2,8 +2,25 @@
 import InscripcionClient from './InscripcionClient';
 import { COMPARSAS, COMPARSA_IDS } from '../../../lib/comparsas';
 
-const SITE_URL =
-    process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+// 🔧 Auto-detecta la URL según el entorno
+function getSiteUrl() {
+    // 1. Env var explícita (local o si la seteás manualmente)
+    if (process.env.NEXT_PUBLIC_SITE_URL) {
+        return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/$/, '');
+    }
+    // 2. Producción en Vercel (dominio principal)
+    if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+        return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+    }
+    // 3. Preview deploy en Vercel
+    if (process.env.VERCEL_URL) {
+        return `https://${process.env.VERCEL_URL}`;
+    }
+    // 4. Local
+    return 'http://localhost:3000';
+}
+
+const SITE_URL = getSiteUrl();
 
 // ----------------------------------------------------------
 // Metadata dinámica por comparsa
@@ -23,13 +40,18 @@ export async function generateMetadata({ params }) {
 
     const titulo = `Inscribite a ${c.nombre} (${c.club}) | Carnavales 2027`;
     const descripcion = `Formulario de inscripción para la comparsa ${c.nombre} del club ${c.club}. Completá tus datos para participar de los Carnavales de Chajarí 2027.`;
-    const imagen = `${SITE_URL}${c.logo}`;
     const url = `${SITE_URL}/inscripcion/${comparsaId}`;
 
+    // 🖼️ Imagen OG (usa PNG para máxima compatibilidad)
+    const ogImagePath = c.og || c.logo.replace(/\.webp$/, '.png');
+    const imagen = `${SITE_URL}${ogImagePath}`;
+
     return {
+        metadataBase: new URL(SITE_URL),
         title: titulo,
         description: descripcion,
         alternates: { canonical: `/inscripcion/${comparsaId}` },
+
         openGraph: {
             type: 'website',
             url,
@@ -43,17 +65,18 @@ export async function generateMetadata({ params }) {
                     width: 400,
                     height: 400,
                     alt: `Logo de ${c.nombre}`,
-                    type: 'image/webp',
+                    type: 'image/png',
                 },
             ],
         },
+
         twitter: {
             card: 'summary',
             title: titulo,
             description: descripcion,
             images: [imagen],
         },
-        themeColor: c.color,
+
         robots: {
             index: false,
             follow: true,
@@ -66,16 +89,10 @@ export async function generateMetadata({ params }) {
     };
 }
 
-// ----------------------------------------------------------
-// Pre-renderizado de las 4 rutas en build
-// ----------------------------------------------------------
 export function generateStaticParams() {
     return COMPARSA_IDS.map((id) => ({ id }));
 }
 
-// ----------------------------------------------------------
-// Página (Server Component — SIN 'use client')
-// ----------------------------------------------------------
 export default async function InscripcionPage({ params }) {
     const resolved = await params;
     return <InscripcionClient params={resolved} />;
