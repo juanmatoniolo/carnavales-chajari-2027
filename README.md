@@ -34,17 +34,6 @@ Cada comparsa tiene su propio link de inscripción para compartir con los intere
 
 ## 🔗 Links de inscripción
 
-```
-/inscripcion/fenix     → Fénix (Ferro)
-/inscripcion/sisiri    → Sirirí (Vélez)
-/inscripcion/alumine   → Aluminé (Primero de Mayo)
-/inscripcion/amaru     → Amarú (San Clemente)
-```
-
-Compartí el link de tu comparsa por WhatsApp y los interesados se inscriben solos.
-
----
-
 ## 🛠️ Stack
 
 - **Next.js 16** (App Router)
@@ -55,90 +44,6 @@ Compartí el link de tu comparsa por WhatsApp y los interesados se inscriben sol
 ---
 
 ## 🚀 Desarrollo local
-
-```bash
-# Instalar dependencias
-npm install
-
-# Configurar .env.local (ver abajo)
-
-# Correr en desarrollo
-npm run dev
-```
-
-Abrir [http://localhost:3000](http://localhost:3000).
-
-### Variables de entorno
-
-Crear `.env.local` en la raíz:
-
-```env
-NEXT_PUBLIC_FIREBASE_API_KEY=tu_api_key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=tu_proyecto.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_DATABASE_URL=https://tu_proyecto-default-rtdb.firebaseio.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=tu_proyecto
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=tu_proyecto.firebasestorage.app
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789
-NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abcdef
-NEXT_PUBLIC_SITE_URL=http://localhost:3000
-```
-
----
-
-## 📁 Estructura
-
-```
-src/
-├── app/
-│   ├── page.jsx              # Login
-│   ├── inicio/               # Panel de cada comparsa
-│   ├── panel/                # Panel del administrador general
-│   ├── inscripcion/[id]/     # Formulario público
-│   └── not-found.jsx         # 404
-├── components/
-│   ├── FormInscripcion.jsx
-│   ├── ModalCargaMasiva.jsx
-│   └── ProtectedRoute.jsx
-├── firebase/
-│   └── firebase.js
-└── lib/
-    ├── comparsas.js
-    └── dates.js
-```
-
----
-
-## 📝 Scripts
-
-| Comando         | Descripción            |
-| --------------- | ---------------------- |
-| `npm run dev`   | Servidor de desarrollo |
-| `npm run build` | Build de producción    |
-| `npm start`     | Servidor de producción |
-| `npm run lint`  | Linter                 |
-
----
-
-## 📲 Instalar como app
-
-El sitio funciona como PWA. Para instalarlo:
-
-- **Android (Chrome)**: menú → _"Agregar a pantalla de inicio"_
-- **iOS (Safari)**: Compartir → _"Agregar a inicio"_
-- **Desktop**: ícono de instalación en la barra de direcciones
-
----
-
-## 🚢 Deploy
-
-Recomendado: [Vercel](https://vercel.com)
-
-1. Subir el repo a GitHub
-2. Importar en Vercel
-3. Configurar las variables de entorno
-4. Deploy ✅
-
----
 
 ## 📄 Licencia
 
