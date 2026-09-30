@@ -1,0 +1,63 @@
+{
+	"name": "Carnaval Chajarí",
+	"short_name": "Carnaval",
+	"description": "Sistema de gestión de comparsas y bailarines de los Carnavales de Chajarí.",
+	"id": "/",
+	"start_url": "/",
+	"scope": "/",
+	"display": "standalone",
+	"orientation": "portrait-primary",
+	"lang": "es-AR",
+	"dir": "ltr",
+	"background_color": "#ffffff",
+	"theme_color": "#ffffff",
+	"categories": ["events", "entertainment", "productivity"],
+	"icons": [
+		{
+			"src": "/android-chrome-192x192.webp",
+			"sizes": "192x192",
+			"type": "image/webp",
+			"purpose": "any maskable"
+		},
+		{
+			"src": "/android-chrome-512x512.webp",
+			"sizes": "512x512",
+			"type": "image/webp",
+			"purpose": "any maskable"
+		}
+	],
+	"shortcuts": [
+		{
+			"name": "Ingresar",
+			"short_name": "Login",
+			"url": "/",
+			"description": "Ir directo a la pantalla de inicio de sesión."
+		},
+		{
+			"name": "Panel",
+			"short_name": "Panel",
+			"url": "/panel",
+			"description": "Abrir el panel de gestión."
+		},
+		{
+			"name": "Participar",
+			"short_name": "Participar",
+			"url": "/inscripcion/fenix",
+			"description": "Ir a la sección para sumarte a una comparsa."
+		},
+		{
+			"name": "Comparsas",
+			"short_name": "Carnaval",
+			"url": "/panel",
+			"description": "Ver las comparsas participantes."
+		}
+	],
+	"screenshots": [
+		{
+			"src": "/og-image.webp",
+			"sizes": "1200x630",
+			"type": "image/webp"
+		}
+	],
+	"prefer_related_applications": false
+}
